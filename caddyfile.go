@@ -9,7 +9,11 @@ import (
 )
 
 func init() {
+	// Register our directive
 	httpcaddyfile.RegisterHandlerDirective("user_ip_tracking", parseCaddyfile)
+
+	// Set the order of our directive to run before handle directives
+	httpcaddyfile.RegisterDirectiveOrder("user_ip_tracking", httpcaddyfile.Before, "handle")
 }
 
 // parseCaddyfile unmarshals tokens from h into a new UserIpTracking middleware handler.

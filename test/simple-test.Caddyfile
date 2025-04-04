@@ -1,0 +1,25 @@
+{
+	log {
+		output stderr
+		level DEBUG
+	}
+
+	order user_ip_tracking before respond
+	auto_https off
+	http_port 9876
+	https_port 9877
+}
+
+localhost:29628 {
+	log {
+		level DEBUG
+	}
+
+	user_ip_tracking {
+		persist_path /tmp/user_ips.json
+		max_ips_per_user 5
+		user_data_ttl 10
+	}
+
+	# respond "Hello, World!"
+}

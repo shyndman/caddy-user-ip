@@ -10,7 +10,7 @@
 	https_port 9877
 }
 
-localhost:9876 {
+localhost:19752 {
 	log {
 		level DEBUG
 	}
@@ -22,5 +22,5 @@ localhost:9876 {
 		user_data_ttl 10
 	}
 
-	respond "Hello, World!"
+	# respond "Hello, World!"
 }
