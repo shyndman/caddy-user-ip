@@ -8,4 +8,9 @@ type Config struct {
 
 	// MaxIpsPerUser is the maximum number of recent distinct IPs to store for each user
 	MaxIpsPerUser uint64 `json:"max_ips_per_user,omitempty"`
+
+	// UserDataTTL is the time-to-live for user data in seconds
+	// After this period of inactivity, a user's data will be removed
+	// A value of 0 means no expiration
+	UserDataTTL uint64 `json:"user_data_ttl,omitempty"`
 }

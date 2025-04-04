@@ -48,6 +48,16 @@ func (m *UserIpTracking) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return err
 			}
 
+		case "user_data_ttl":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			var err error
+			m.UserDataTTL, err = strconv.ParseUint(d.Val(), 10, 32)
+			if err != nil {
+				return err
+			}
+
 		default:
 			return d.Errf("unknown subdirective %q", d.Val())
 		}
