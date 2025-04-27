@@ -12,7 +12,7 @@ var globalStorage *UserIPStorage
 
 func init() {
 	// Register the middleware module
-	caddy.RegisterModule(UserIpTracking{})
+	caddy.RegisterModule(&UserIpTracking{})
 
 	// Register the matcher module
 	caddy.RegisterModule(UserIPMatcher{})

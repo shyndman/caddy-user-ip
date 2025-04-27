@@ -32,21 +32,11 @@ type UserIpTracking struct {
 }
 
 // CaddyModule returns the Caddy module information.
-func (UserIpTracking) CaddyModule() caddy.ModuleInfo {
+func (*UserIpTracking) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.user_ip_tracking",
 		New: func() caddy.Module { return new(UserIpTracking) },
 	}
-}
-
-// Order sets the order of this middleware in the handler chain.
-// We want this middleware to run before any handle directives so that
-// the IP tracking happens before any matchers are evaluated.
-func (UserIpTracking) Order() int {
-	// This places our middleware before most other handlers
-	// See https://github.com/caddyserver/caddy/blob/master/modules/caddyhttp/server.go
-	// for the list of standard handler orders
-	return 0 // Run very early, before most other handlers
 }
 
 // Provision sets up the middleware.
@@ -176,9 +166,9 @@ func getClientIP(r *http.Request) string {
 
 // Interface guards
 var (
-	_ caddy.Provisioner     = (*UserIpTracking)(nil)
+	_ caddy.Provisioner           = (*UserIpTracking)(nil)
 	_ caddyhttp.MiddlewareHandler = (*UserIpTracking)(nil)
-	_ caddy.CleanerUpper    = (*UserIpTracking)(nil) // Implement CleanerUpper
+	_ caddy.CleanerUpper          = (*UserIpTracking)(nil) // Implement CleanerUpper
 )
 
 // Cleanup is called when the module is unloaded.
