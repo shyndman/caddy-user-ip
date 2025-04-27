@@ -4,8 +4,8 @@ go 1.24
 
 require (
 	github.com/caddyserver/caddy/v2 v2.9.1
-	go.uber.org/zap v1.27.0
 	github.com/jonboulle/clockwork v0.5.0
+	go.uber.org/zap v1.27.0
 )
 
 require (
