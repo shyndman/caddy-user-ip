@@ -136,25 +136,6 @@ The middleware attempts to determine the client's IP address using the following
 2. `X-Real-IP` header
 3. Request's `RemoteAddr`
 
-## Testing
-
-The module includes several test scripts and Caddyfile configurations in the `test/` directory:
-
-- `smoke-test.Caddyfile`: Basic configuration test
-- `simple-test.Caddyfile`: Tests IP tracking functionality
-- `matcher-test.Caddyfile`: Tests the matcher functionality
-
-To run the tests:
-
-```bash
-# Build and run the smoke test
-./build-and-test.sh
-
-# Test the matcher functionality
-cd test
-./matcher-test.sh
-```
-
 ## License
 
 [MIT License](LICENSE)
