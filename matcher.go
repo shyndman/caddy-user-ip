@@ -6,6 +6,10 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+
+	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/common/types/ref"
 	"go.uber.org/zap"
 )
 
@@ -14,6 +18,11 @@ import (
 type UserIPMatcher struct {
 	// Logger for the matcher
 	logger *zap.Logger
+}
+
+// celUserIPMatcherLib is a helper struct to implement cel.Library for UserIPMatcher.
+type celUserIPMatcherLib struct {
+	matcher *UserIPMatcher
 }
 
 // CaddyModule returns the Caddy module information.
@@ -28,6 +37,23 @@ func (UserIPMatcher) CaddyModule() caddy.ModuleInfo {
 func (m *UserIPMatcher) Provision(ctx caddy.Context) error {
 	m.logger = ctx.Logger(m)
 	return nil
+}
+
+func (UserIPMatcher) CELLibrary(ctx caddy.Context) (cel.Library, error) {
+	return caddyhttp.CELMatcherImpl(
+		// name of the macro, this is the function name that users see when writing expressions.
+		"user_ip",
+		// name of the function that the macro will be rewritten to call.
+		"request_ip_match_user_ip",
+		// internal data type of the MatchPath value.
+		[]*cel.Type{},
+		// function to convert a constant list of strings to a MatchPath instance.
+		func(data ref.Val) (caddyhttp.RequestMatcherWithError, error) {
+			m := UserIPMatcher{}
+			err := m.Provision(ctx)
+			return m, err
+		},
+	)
 }
 
 // Match returns true if the request's client IP address is in the list of tracked user IPs.
@@ -86,3 +112,6 @@ func (m *UserIPMatcher) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	}
 	return nil
 }
+
+var _ caddyhttp.RequestMatcherWithError = (*UserIPMatcher)(nil)
+var _ caddyhttp.CELLibraryProducer = (*UserIPMatcher)(nil)
