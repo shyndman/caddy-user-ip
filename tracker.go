@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync" // Added sync import
 	"time" // Keep time for time.Duration
+
 	"github.com/jonboulle/clockwork"
 
 	"github.com/caddyserver/caddy/v2"
