@@ -1,18 +1,23 @@
 // package caddy_user_ip provides Caddy middleware for tracking and matching user IPs.
 package caddy_user_ip
 
+// Adding a comment to trigger re-analysis
+
 import (
 	"fmt"
 	"net"
 	"net/http"
 	"strings"
 	"sync" // Added sync import
-	"time" // Added time import
+	"time" // Keep time for time.Duration
+	"github.com/jonboulle/clockwork"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"go.uber.org/zap"
 )
+
+var testClockInject clockwork.Clock
 
 // UserIpTracking is middleware that tracks and matches user IP addresses.
 type UserIpTracking struct {
@@ -24,6 +29,9 @@ type UserIpTracking struct {
 
 	// Storage for user IPs
 	storage *UserIPStorage
+
+	// clock provides access to time functions via the clockwork interface
+	clock clockwork.Clock
 
 	// Fields for periodic persistence
 	persistInterval time.Duration
@@ -42,6 +50,11 @@ func (*UserIpTracking) CaddyModule() caddy.ModuleInfo {
 // Provision sets up the middleware.
 func (m *UserIpTracking) Provision(ctx caddy.Context) error {
 	m.logger = ctx.Logger(m)
+	if testClockInject != nil {
+		m.clock = testClockInject
+	} else {
+		m.clock = clockwork.NewRealClock() // Instantiate the real clock from the library
+	}
 
 	// Log the configuration values to verify they were parsed correctly
 	m.logger.Info("UserIpTracking middleware provisioned",
@@ -59,7 +72,7 @@ func (m *UserIpTracking) Provision(ctx caddy.Context) error {
 	}
 
 	// Initialize the storage
-	m.storage = NewUserIPStorage(m.PersistPath, m.MaxIpsPerUser, m.UserDataTTL)
+	m.storage = NewUserIPStorage(m.PersistPath, m.MaxIpsPerUser, m.UserDataTTL, m.clock, m.logger) // Pass the logger
 
 	// Set the global storage reference for the matcher to use
 	globalStorage = m.storage
@@ -76,10 +89,10 @@ func (m *UserIpTracking) Provision(ctx caddy.Context) error {
 		zap.String("path", m.PersistPath))
 
 	// Initialize and start the periodic persister
-	m.persistInterval = 5 * time.Minute // Hardcoded interval for now
+	m.persistInterval = 5 * time.Minute // Or read from config if made configurable
 	m.stopPersister = make(chan struct{})
 	m.persisterWg.Add(1)
-	go m.runPeriodicPersister()
+	go m.runPeriodicPersister() // This will now use m.clock
 
 	return nil
 }
@@ -195,14 +208,14 @@ func (m *UserIpTracking) Cleanup() error {
 func (m *UserIpTracking) runPeriodicPersister() {
 	defer m.persisterWg.Done()
 
-	ticker := time.NewTicker(m.persistInterval)
+	ticker := m.clock.NewTicker(m.persistInterval) // Use the clockwork interface
 	defer ticker.Stop()
 
 	m.logger.Info("Periodic persister started", zap.Duration("interval", m.persistInterval))
 
 	for {
 		select {
-		case <-ticker.C:
+		case <-ticker.Chan(): // Use Chan() method from clockwork.Ticker interface
 			m.logger.Debug("Periodic persistence triggered")
 			if err := m.storage.PersistToDisk(true); err != nil { // Force persistence
 				m.logger.Error("Failed during periodic persistence",

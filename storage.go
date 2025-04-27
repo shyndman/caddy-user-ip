@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
-	"time"
+
+	"github.com/jonboulle/clockwork"
+	"go.uber.org/zap" // Import the zap logging library
 )
 
 // UserData represents the data stored for each user
@@ -40,18 +42,29 @@ type UserIPStorage struct {
 
 	// Flag to track if data has changed since last persist
 	dirty bool
+
+	// clock provides access to time functions via the clockwork interface
+	clock clockwork.Clock
+
+	// Logger for the storage
+	logger *zap.Logger
 }
 
 // NewUserIPStorage creates a new UserIPStorage with the given configuration.
-func NewUserIPStorage(persistPath string, maxIPsPerUser uint64, userDataTTL uint64) *UserIPStorage {
-	return &UserIPStorage{
+func NewUserIPStorage(persistPath string, maxIPsPerUser uint64, userDataTTL uint64,
+	clock clockwork.Clock, logger *zap.Logger) *UserIPStorage {
+	storage := &UserIPStorage{
 		userData:      make(map[string]*UserData),
 		ipToUsers:     make(map[string]map[string]struct{}),
 		maxIPsPerUser: maxIPsPerUser,
 		userDataTTL:   userDataTTL,
 		persistPath:   persistPath,
-		dirty:         false,
+		dirty:         false, // Initialize dirty flag
+		clock:         clock,
+		logger:        logger, // Assign the logger
 	}
+	storage.logger.Debug("UserIPStorage initialized with dirty=false") // Debug log
+	return storage
 }
 
 // AddUserIP adds an IP address for a user, maintaining the FIFO limit.
@@ -66,12 +79,12 @@ func (s *UserIPStorage) AddUserIP(email, ip string) bool {
 		// Create new user data
 		userData = &UserData{
 			IPs:      []string{},
-			LastSeen: time.Now().Unix(),
+			LastSeen: s.clock.Now().Unix(),
 		}
 		s.userData[email] = userData
 	} else {
 		// Update last seen timestamp
-		userData.LastSeen = time.Now().Unix()
+		userData.LastSeen = s.clock.Now().Unix()
 
 		// Check if this user already has this IP in their list
 		for _, existingIP := range userData.IPs {
@@ -110,6 +123,7 @@ func (s *UserIPStorage) AddUserIP(email, ip string) bool {
 
 	// Mark as dirty since data has changed
 	s.dirty = true
+	s.logger.Debug("Dirty flag set to true in AddUserIP", zap.String("user", email)) // Debug log
 
 	// Clean up expired users if TTL is set
 	if s.userDataTTL > 0 {
@@ -167,26 +181,39 @@ func (s *UserIPStorage) LoadFromDisk() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.logger.Debug("Attempting to load data from disk", zap.String("path", s.persistPath))
 	// Check if the file exists
-	if _, err := os.Stat(s.persistPath); os.IsNotExist(err) {
+	fileInfo, err := os.Stat(s.persistPath)
+	if os.IsNotExist(err) {
+		s.logger.Debug("Persistence file does not exist", zap.String("path", s.persistPath))
 		// File doesn't exist, nothing to load
 		return nil
+	} else if err != nil {
+		s.logger.Error("Error stating persistence file", zap.String("path", s.persistPath), zap.Error(err))
+		return err
 	}
+	s.logger.Debug("Persistence file exists", zap.String("path", s.persistPath), zap.Int64("size", fileInfo.Size()))
 
 	// Read the file
 	data, err := os.ReadFile(s.persistPath)
 	if err != nil {
+		s.logger.Error("Error reading persistence file", zap.String("path", s.persistPath), zap.Error(err))
 		return err
 	}
+	s.logger.Debug("Successfully read persistence file", zap.String("path", s.persistPath), zap.Int("bytes_read", len(data)))
 
 	// Parse the JSON
 	var pd persistData
 	if err := json.Unmarshal(data, &pd); err != nil {
+		s.logger.Error("Error unmarshalling persistence data", zap.String("path", s.persistPath), zap.Error(err))
 		return err
 	}
+	s.logger.Debug("Successfully unmarshalled persistence data", zap.String("path", s.persistPath), zap.Int("unmarshalled_user_count", len(pd.UserData)))
+	s.logger.Debug("Unmarshalled user data content", zap.Any("user_data", pd.UserData)) // Log the content for inspection
 
 	// Update our data structures
 	s.userData = pd.UserData
+	s.logger.Info("Loaded data from disk", zap.Int("user_count", len(pd.UserData)), zap.String("path", s.persistPath)) // Info log
 
 	// Rebuild the reverse mapping
 	s.ipToUsers = make(map[string]map[string]struct{})
@@ -200,6 +227,7 @@ func (s *UserIPStorage) LoadFromDisk() error {
 	}
 
 	s.dirty = false
+	s.logger.Debug("Dirty flag set to false after loading from disk") // Debug log
 	return nil
 }
 
@@ -235,7 +263,8 @@ func (s *UserIPStorage) PersistToDisk(force bool) error {
 		return err
 	}
 
-	s.dirty = false // Reset dirty flag after successful write
+	s.dirty = false                                                    // Reset dirty flag after successful write
+	s.logger.Debug("Dirty flag set to false after persisting to disk") // Debug log
 	return nil
 }
 
@@ -248,18 +277,26 @@ func (s *UserIPStorage) IsDirty() bool {
 
 // cleanupExpiredUsers removes users whose data has expired based on TTL.
 func (s *UserIPStorage) cleanupExpiredUsers() {
+	s.logger.Debug("Starting cleanup of expired users") // Debug log
+
 	// Calculate the expiration timestamp
-	expireTime := time.Now().Unix() - int64(s.userDataTTL)
+	expireTime := s.clock.Now().Unix() - int64(s.userDataTTL)
+	s.logger.Debug("Calculated expiration time", zap.Int64("expire_time", expireTime)) // Debug log
 
 	// Check each user
 	for email, userData := range s.userData {
+		s.logger.Debug("Checking user for expiration", zap.String("user", email), zap.Int64("last_seen", userData.LastSeen), zap.Int64("expire_time", expireTime)) // Debug log
 		// If the user's last seen timestamp is older than the expiration time
 		if userData.LastSeen < expireTime {
+			s.logger.Debug("User data expired, removing user", zap.String("user", email)) // Debug log
+
 			// Remove all IPs from the reverse mapping
 			for _, ip := range userData.IPs {
+				s.logger.Debug("Removing IP from reverse mapping for expired user", zap.String("user", email), zap.String("ip", ip)) // Debug log
 				if users, exists := s.ipToUsers[ip]; exists {
 					delete(users, email)
 					if len(users) == 0 {
+						s.logger.Debug("Removing IP from ipToUsers as no users remain", zap.String("ip", ip)) // Debug log
 						delete(s.ipToUsers, ip)
 					}
 				}
@@ -267,9 +304,14 @@ func (s *UserIPStorage) cleanupExpiredUsers() {
 
 			// Remove the user from the userData map
 			delete(s.userData, email)
+			s.logger.Debug("Removed user from userData map", zap.String("user", email)) // Debug log
 
 			// Mark as dirty since data has changed
 			s.dirty = true
+			s.logger.Debug("Dirty flag set to true in cleanupExpiredUsers", zap.String("user", email)) // Debug log
+		} else {
+			s.logger.Debug("User data not expired", zap.String("user", email)) // Debug log
 		}
 	}
+	s.logger.Debug("Finished cleanup of expired users") // Debug log
 }
