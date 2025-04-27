@@ -1,4 +1,5 @@
 # Caddy User IP Tracking
+![CI Workflow Status](https://github.com/shyndman/caddy-user-ip/actions/workflows/ci.yml/badge.svg)
 
 A Caddy v2 module that tracks authenticated users' IP addresses and provides a matcher to identify requests from known user IPs.
 
