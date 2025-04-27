@@ -203,13 +203,13 @@ func (s *UserIPStorage) LoadFromDisk() error {
 	return nil
 }
 
-// PersistToDisk saves the user IP data to disk if it has changed.
-func (s *UserIPStorage) PersistToDisk() error {
+// PersistToDisk saves the user IP data to disk. If force is false, it only persists if data has changed.
+func (s *UserIPStorage) PersistToDisk(force bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Only persist if data has changed
-	if !s.dirty {
+	// Only persist if data has changed AND we are not forcing a write
+	if !s.dirty && !force {
 		return nil
 	}
 
@@ -235,7 +235,7 @@ func (s *UserIPStorage) PersistToDisk() error {
 		return err
 	}
 
-	s.dirty = false
+	s.dirty = false // Reset dirty flag after successful write
 	return nil
 }
 

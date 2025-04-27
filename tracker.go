@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync" // Added sync import
+	"time" // Added time import
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
@@ -22,6 +24,11 @@ type UserIpTracking struct {
 
 	// Storage for user IPs
 	storage *UserIPStorage
+
+	// Fields for periodic persistence
+	persistInterval time.Duration
+	stopPersister   chan struct{}
+	persisterWg     sync.WaitGroup
 }
 
 // CaddyModule returns the Caddy module information.
@@ -78,6 +85,12 @@ func (m *UserIpTracking) Provision(ctx caddy.Context) error {
 	m.logger.Info("Loaded user IP data from disk",
 		zap.String("path", m.PersistPath))
 
+	// Initialize and start the periodic persister
+	m.persistInterval = 5 * time.Minute // Hardcoded interval for now
+	m.stopPersister = make(chan struct{})
+	m.persisterWg.Add(1)
+	go m.runPeriodicPersister()
+
 	return nil
 }
 
@@ -117,15 +130,15 @@ func (m *UserIpTracking) ServeHTTP(w http.ResponseWriter, r *http.Request, next 
 		zap.Strings("known_users", users),
 		zap.Strings("known_ips", ips))
 
-	// If the IP was newly added, persist the data
+	// If the IP was newly added, persist the data (respecting the dirty flag)
 	if ipAdded {
 		go func() {
-			if err := m.storage.PersistToDisk(); err != nil {
-				m.logger.Error("Failed to persist user IP data",
+			if err := m.storage.PersistToDisk(false); err != nil {
+				m.logger.Error("Failed to persist user IP data (new IP)",
 					zap.String("path", m.PersistPath),
 					zap.Error(err))
 			} else {
-				m.logger.Debug("Persisted user IP data",
+				m.logger.Debug("Persisted user IP data (new IP)",
 					zap.String("path", m.PersistPath))
 			}
 		}()
@@ -159,4 +172,58 @@ func getClientIP(r *http.Request) string {
 	}
 
 	return ip
+}
+
+// Interface guards
+var (
+	_ caddy.Provisioner     = (*UserIpTracking)(nil)
+	_ caddyhttp.MiddlewareHandler = (*UserIpTracking)(nil)
+	_ caddy.CleanerUpper    = (*UserIpTracking)(nil) // Implement CleanerUpper
+)
+
+// Cleanup is called when the module is unloaded.
+func (m *UserIpTracking) Cleanup() error {
+	m.logger.Info("Shutting down periodic persister")
+	close(m.stopPersister) // Signal the goroutine to stop
+	m.persisterWg.Wait()   // Wait for the goroutine to finish
+	m.logger.Info("Periodic persister stopped")
+
+	// Perform final persistence on shutdown
+	m.logger.Info("Performing final persistence on shutdown")
+	if err := m.storage.PersistToDisk(true); err != nil {
+		m.logger.Error("Failed to perform final persistence on shutdown",
+			zap.String("path", m.PersistPath),
+			zap.Error(err))
+		return fmt.Errorf("final persistence on shutdown: %v", err)
+	}
+	m.logger.Info("Final persistence on shutdown complete")
+
+	return nil
+}
+
+// runPeriodicPersister runs a goroutine to periodically persist data.
+func (m *UserIpTracking) runPeriodicPersister() {
+	defer m.persisterWg.Done()
+
+	ticker := time.NewTicker(m.persistInterval)
+	defer ticker.Stop()
+
+	m.logger.Info("Periodic persister started", zap.Duration("interval", m.persistInterval))
+
+	for {
+		select {
+		case <-ticker.C:
+			m.logger.Debug("Periodic persistence triggered")
+			if err := m.storage.PersistToDisk(true); err != nil { // Force persistence
+				m.logger.Error("Failed during periodic persistence",
+					zap.String("path", m.PersistPath),
+					zap.Error(err))
+			} else {
+				m.logger.Debug("Periodic persistence complete")
+			}
+		case <-m.stopPersister:
+			m.logger.Debug("Stop signal received, periodic persister exiting")
+			return
+		}
+	}
 }

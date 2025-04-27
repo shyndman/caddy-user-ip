@@ -121,10 +121,13 @@ example.com {
 
 ## How It Works
 
-1. The middleware captures the IP address of authenticated users (identified by the `X-Token-User-Email` header)
-2. IP addresses are stored in memory and persisted to disk when changes occur
-3. The `user_ip` matcher checks if the client IP is in the list of known user IPs
-4. Requests can be handled differently based on the matcher result
+1. The middleware captures the IP address of authenticated users (identified by the `X-Token-User-Email` header). The `last_seen` timestamp for the user is updated in memory on every request.
+2. User data, including the list of known IPs and the `last_seen` timestamp, is stored in memory and persisted to disk to ensure durability across restarts. Persistence occurs under the following conditions:
+    *   Immediately (asynchronously) when a **new IP address** is added for a user.
+    *   Periodically (by default, every 5 minutes) in a background process, saving the current state including the latest `last_seen` timestamps.
+    *   During a **graceful Caddy server shutdown**, ensuring the most recent state is saved.
+3. The `user_ip` matcher checks if the client IP is in the list of known user IPs associated with any user.
+4. Requests can be handled differently based on the matcher result.
 
 ### IP Detection
 
