@@ -839,3 +839,88 @@ func TestCleanupExpiredUsersSetsDirtyFlag(t *testing.T) {
 	// Assertion 3: The file should have been written (checked by pollForUserData succeeding for user_trigger).
 	// We can also check the mod time is newer than the initial write time if needed, but polling is sufficient.
 }
+
+// TestUserIPTracking_MRU verifies the Most Recently Used (MRU) behavior of the user_ip_tracking middleware.
+// Seeing an existing IP should move it to the front of the user's list.
+func TestUserIPTracking_MRU(t *testing.T) {
+	persistPath := createTempPersistFile(t)
+
+	fakeClock := setupFakeClock(t)
+
+	tester := createTester(t, `
+    localhost:9080 {
+        route {
+            user_ip_tracking {
+                persist_path `+persistPath+`
+                max_ips_per_user 3 # Set limit to 3 for MRU test
+                user_data_ttl 3600
+            }
+            respond "OK"
+        }
+    }
+  `)
+
+	testUserEmail := "mru-test@example.com"
+
+	// Step 1: Send three sequential requests with distinct IPs
+	sendTestRequest(t, tester, "GET", "http://localhost:9080/", testUserEmail, "10.1.1.1", "") // First IP
+	fakeClock.Advance(1 * time.Second)                                                        // Advance time
+	sendTestRequest(t, tester, "GET", "http://localhost:9080/", testUserEmail, "10.2.2.2", "") // Second IP
+	fakeClock.Advance(1 * time.Second)                                                        // Advance time
+	sendTestRequest(t, tester, "GET", "http://localhost:9080/", testUserEmail, "10.3.3.3", "") // Third IP
+
+	// Poll until data is persisted after the initial three requests
+	persistedUserDataInitial := pollForUserData(t, persistPath, testUserEmail, 2*time.Second, 10*time.Millisecond)
+
+	// Assert initial IP list order (newest first)
+	userDataInitial, existsInitial := persistedUserDataInitial[testUserEmail]
+	if !existsInitial {
+		t.Fatalf("Expected user '%s' in persisted data after initial requests, but not found", testUserEmail)
+	}
+
+	expectedIPsInitial := []string{"10.3.3.3", "10.2.2.2", "10.1.1.1"}
+	if len(userDataInitial.IPs) != len(expectedIPsInitial) {
+		t.Errorf("Initial state: Expected user '%s' to have %d IPs, but got %d. IPs: %v", testUserEmail, len(expectedIPsInitial), len(userDataInitial.IPs), userDataInitial.IPs)
+	} else {
+		for i := range expectedIPsInitial {
+			if userDataInitial.IPs[i] != expectedIPsInitial[i] {
+				t.Errorf("Initial state: Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPsInitial[i], userDataInitial.IPs[i], userDataInitial.IPs)
+				break
+			}
+		}
+	}
+
+	// Step 2: Send a fourth request re-using the first IP address
+	fakeClock.Advance(1 * time.Second) // Advance time
+	expectedLastSeen := fakeClock.Now().Unix() // Record expected LastSeen before sending request
+	sendTestRequest(t, tester, "GET", "http://localhost:9080/", testUserEmail, "10.1.1.1", "") // Re-use first IP
+
+	// Advance clock by the periodic persistence interval to trigger persistence
+	fakeClock.Advance(5 * time.Minute)
+
+	// Poll until data is persisted after the fourth request
+	persistedUserDataMRU := pollForUserData(t, persistPath, testUserEmail, 2*time.Second, 10*time.Millisecond)
+
+	// Assert MRU IP list order (re-added IP moved to front)
+	userDataMRU, existsMRU := persistedUserDataMRU[testUserEmail]
+	if !existsMRU {
+		t.Fatalf("Expected user '%s' in persisted data after MRU request, but not found", testUserEmail)
+	}
+
+	expectedIPsMRU := []string{"10.1.1.1", "10.3.3.3", "10.2.2.2"}
+	if len(userDataMRU.IPs) != len(expectedIPsMRU) {
+		t.Errorf("MRU state: Expected user '%s' to have %d IPs, but got %d. IPs: %v", testUserEmail, len(expectedIPsMRU), len(userDataMRU.IPs), userDataMRU.IPs)
+	} else {
+		for i := range expectedIPsMRU {
+			if userDataMRU.IPs[i] != expectedIPsMRU[i] {
+				t.Errorf("MRU state: Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPsMRU[i], userDataMRU.IPs[i], userDataMRU.IPs)
+				break
+			}
+		}
+	}
+
+	// Assert that the LastSeen timestamp was updated to the fake clock's current time
+	if userDataMRU.LastSeen != expectedLastSeen {
+		t.Errorf("MRU state: Expected LastSeen timestamp to be %d, but got %d", expectedLastSeen, userDataMRU.LastSeen)
+	}
+}

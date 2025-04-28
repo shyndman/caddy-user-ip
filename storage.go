@@ -87,11 +87,30 @@ func (s *UserIPStorage) AddUserIP(email, ip string) bool {
 		userData.LastSeen = s.clock.Now().Unix()
 
 		// Check if this user already has this IP in their list
-		for _, existingIP := range userData.IPs {
+		foundIndex := -1
+		for i, existingIP := range userData.IPs {
 			if existingIP == ip {
-				// IP already exists for this user, nothing to do
-				return false
+				foundIndex = i
+				break // Found the IP, no need to continue searching
 			}
+		}
+
+		if foundIndex != -1 {
+			// IP already exists for this user
+			if foundIndex > 0 {
+				// IP is not the most recent, move it to the front (MRU)
+				// Remove the IP from its current position
+				userData.IPs = append(userData.IPs[:foundIndex], userData.IPs[foundIndex+1:]...)
+
+				// Prepend the IP to the front
+				userData.IPs = append([]string{ip}, userData.IPs...)
+
+				// Mark as dirty since data has changed
+				s.dirty = true
+				s.logger.Debug("Dirty flag set to true in AddUserIP (MRU reorder)", zap.String("user", email), zap.String("ip", ip)) // Debug log
+			}
+			// IP was already the most recent (foundIndex == 0) or has been moved to the front
+			return false // No *new* IP was added
 		}
 	}
 
