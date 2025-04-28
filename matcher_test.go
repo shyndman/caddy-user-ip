@@ -142,7 +142,7 @@ func TestNoMatchWithoutTracker(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 	req.Header.Set("X-Token-User-Email", "test@example.com")
-	req.Header.Set("X-Forwarded-For", "1.1.1.1")
+	req.Header.Set("X-Forwarded-For", "1.2.1.2")
 
 	resp, err := tester.Client.Do(req)
 	if err != nil {
