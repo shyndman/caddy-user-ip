@@ -1,4 +1,4 @@
-name: CI
+name: Test Build
 
 on:
   push:
@@ -6,42 +6,20 @@ on:
       - main
   pull_request:
 
+
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
 
-      - name: Lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest # Use the latest version of golangci-lint
+    - name: Build
+      run: go build -v ./...
 
-      - name: Test with coverage
-        run: go test ./... -coverprofile=coverage.out -covermode=atomic
-
-      - name: Build for Linux/amd64
-        run: |
-          GOOS=linux GOARCH=amd64 go build -o caddy-user-ip-linux-amd64
-
-      - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: caddy-user-ip-linux-amd64
-          path: caddy-user-ip-linux-amd64
-
-      - name: Build for Linux/arm64
-        run: |
-          GOOS=linux GOARCH=arm64 go build -o caddy-user-ip-linux-arm64
-
-      - name: Upload ARM artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: caddy-user-ip-linux-arm64
-          path: caddy-user-ip-linux-arm64
+    - name: Test
+      uses: robherley/go-test-action@v0
