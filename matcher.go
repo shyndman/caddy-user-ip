@@ -39,14 +39,17 @@ func (m *UserIPMatcher) Provision(ctx caddy.Context) error {
 	return nil
 }
 
-func (UserIPMatcher) CELLibrary(ctx caddy.Context) (cel.Library, error) {
+// The CEL matcher is expression is user_ip('anything not used'), because I
+// believe that you need to accept some kind of argument. Maybe I should look
+// into CEL variables?
+func (m UserIPMatcher) CELLibrary(ctx caddy.Context) (cel.Library, error) {
 	return caddyhttp.CELMatcherImpl(
 		// name of the macro, this is the function name that users see when writing expressions.
 		"user_ip",
 		// name of the function that the macro will be rewritten to call.
-		"request_ip_match_user_ip",
+		"request_has_user_ip",
 		// internal data type of the MatchPath value.
-		[]*cel.Type{},
+		[]*cel.Type{cel.StringType},
 		// function to convert a constant list of strings to a MatchPath instance.
 		func(data ref.Val) (caddyhttp.RequestMatcherWithError, error) {
 			m := UserIPMatcher{}

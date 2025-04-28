@@ -509,7 +509,6 @@ func TestMultipleIPsPerUser(t *testing.T) {
 	}
 }
 
-
 // TestAddUserIPDirtyFlagPersistFalse verifies that adding a new user/IP sets the dirty flag and triggers a non-forced write,
 // and that subsequent identical requests do not trigger a write, but a new IP for the same user does.
 func TestAddUserIPDirtyFlagPersistFalse(t *testing.T) {
