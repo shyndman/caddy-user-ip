@@ -111,7 +111,8 @@ func createTempPersistFile(t *testing.T) string {
 
 	t.Cleanup(func() {
 		t.Logf("INFO: Cleaning up temp persist directory: %s", tempDir)
-		os.RemoveAll(tempDir)
+		// Ignoring error in test cleanup
+		_ = os.RemoveAll(tempDir)
 	})
 
 	return persistPath

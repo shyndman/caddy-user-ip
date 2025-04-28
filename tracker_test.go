@@ -54,7 +54,10 @@ func TestBasicIPTracking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to send request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != 200 {
 		t.Errorf("Expected status code 200, but got %d", resp.StatusCode)
@@ -113,7 +116,10 @@ func TestIPExtractionLogic(t *testing.T) {
 	if errA != nil {
 		t.Fatalf("Failed to send request A: %v", errA)
 	}
-	defer respA.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = respA.Body.Close()
+	}()
 	if respA.StatusCode != 200 {
 		t.Errorf("Scenario A: Expected status code 200, but got %d", respA.StatusCode)
 	}
@@ -131,7 +137,10 @@ func TestIPExtractionLogic(t *testing.T) {
 	if errB != nil {
 		t.Fatalf("Failed to send request B: %v", errB)
 	}
-	defer respB.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = respB.Body.Close()
+	}()
 	if respB.StatusCode != 200 {
 		t.Errorf("Scenario B: Expected status code 200, but got %d", respB.StatusCode)
 	}
@@ -160,7 +169,10 @@ func TestIPExtractionLogic(t *testing.T) {
 	if errC != nil {
 		t.Fatalf("Failed to send request C: %v", errC)
 	}
-	defer respC.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = respC.Body.Close()
+	}()
 	if respC.StatusCode != 200 {
 		t.Errorf("Scenario C: Expected status code 200, but got %d", respC.StatusCode)
 	}
@@ -248,7 +260,10 @@ func TestMissingEmailHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to send request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != 200 {
 		t.Errorf("Expected status code 200, but got %d", resp.StatusCode)

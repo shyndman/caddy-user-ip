@@ -12,7 +12,10 @@ import (
 // user's email and IP, asserting that the matcher matches the request.
 func TestMatchKnownIP(t *testing.T) {
 	persistPath := createTempPersistFile(t)
-	defer os.Remove(persistPath) // Clean up the temporary file
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = os.Remove(persistPath)
+	}() // Clean up the temporary file
 
 	setupFakeClock(t) // Inject fake clock
 
@@ -55,7 +58,10 @@ func TestMatchKnownIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to send request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = resp.Body.Close()
+	}()
 
 	// Assertions: Check that the request was matched by the user_ip matcher
 	if resp.StatusCode != 200 {
@@ -68,7 +74,10 @@ func TestMatchKnownIP(t *testing.T) {
 // asserting that the matcher does *not* match.
 func TestNoMatchUnknownIP(t *testing.T) {
 	persistPath := createTempPersistFile(t)
-	defer os.Remove(persistPath) // Clean up the temporary file
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = os.Remove(persistPath)
+	}() // Clean up the temporary file
 
 	setupFakeClock(t) // Inject fake clock
 
@@ -110,7 +119,10 @@ func TestNoMatchUnknownIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to send request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = resp.Body.Close()
+	}()
 
 	// Assertions: Check that the request was NOT matched by the user_ip matcher
 	if resp.StatusCode != 404 {
@@ -148,7 +160,10 @@ func TestNoMatchWithoutTracker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to send request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = resp.Body.Close()
+	}()
 
 	// Assertions: Check that the request was NOT matched by the user_ip matcher
 	if resp.StatusCode != 404 {
@@ -162,7 +177,10 @@ func TestNoMatchWithoutTracker(t *testing.T) {
 // in each case.
 func TestMatchDifferentIPSources(t *testing.T) {
 	persistPath := createTempPersistFile(t)
-	defer os.Remove(persistPath) // Clean up the temporary file
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = os.Remove(persistPath)
+	}() // Clean up the temporary file
 
 	setupFakeClock(t) // Inject fake clock
 
@@ -206,7 +224,10 @@ func TestMatchDifferentIPSources(t *testing.T) {
 	if err1 != nil {
 		t.Fatalf("Failed to send request 1: %v", err1)
 	}
-	defer resp1.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = resp1.Body.Close()
+	}()
 
 	if resp1.StatusCode != 200 {
 		t.Errorf("Scenario 1 (X-Forwarded-For): Expected status code 200, but got %d", resp1.StatusCode)
@@ -224,7 +245,10 @@ func TestMatchDifferentIPSources(t *testing.T) {
 	if err2 != nil {
 		t.Fatalf("Failed to send request 2: %v", err2)
 	}
-	defer resp2.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = resp2.Body.Close()
+	}()
 
 	if resp2.StatusCode != 200 {
 		t.Errorf("Scenario 2 (X-Real-IP): Expected status code 200, but got %d", resp2.StatusCode)
@@ -256,7 +280,10 @@ func TestMatchDifferentIPSources(t *testing.T) {
 // that user's email and IP, asserting that the request is matched by the CEL expression.
 func TestCELMatchKnownIP(t *testing.T) {
 	persistPath := createTempPersistFile(t)
-	defer os.Remove(persistPath) // Clean up the temporary file
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = os.Remove(persistPath)
+	}() // Clean up the temporary file
 
 	setupFakeClock(t) // Inject fake clock
 
@@ -300,7 +327,10 @@ func TestCELMatchKnownIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to send request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = resp.Body.Close()
+	}()
 
 	// Assertions: Check that the request was matched by the CEL expression matcher
 	if resp.StatusCode != 200 {
@@ -313,7 +343,10 @@ func TestCELMatchKnownIP(t *testing.T) {
 // asserting that the request is *not* matched by the CEL expression.
 func TestCELNoMatchUnknownIP(t *testing.T) {
 	persistPath := createTempPersistFile(t)
-	defer os.Remove(persistPath) // Clean up the temporary file
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = os.Remove(persistPath)
+	}() // Clean up the temporary file
 
 	setupFakeClock(t) // Inject fake clock
 
@@ -358,7 +391,10 @@ localhost:9080 {
 	if err != nil {
 		t.Fatalf("Failed to send request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Ignoring error in test cleanup
+		_ = resp.Body.Close()
+	}()
 
 	// Assertions: Check that the request was NOT matched by the CEL expression matcher
 	if resp.StatusCode != 404 {

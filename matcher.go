@@ -20,10 +20,6 @@ type UserIPMatcher struct {
 	logger *zap.Logger
 }
 
-// celUserIPMatcherLib is a helper struct to implement cel.Library for UserIPMatcher.
-type celUserIPMatcherLib struct {
-	matcher *UserIPMatcher
-}
 
 // CaddyModule returns the Caddy module information.
 func (UserIPMatcher) CaddyModule() caddy.ModuleInfo {

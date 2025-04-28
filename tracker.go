@@ -198,7 +198,6 @@ func (m *UserIpTracking) Cleanup() error {
 		m.logger.Error("Failed to perform final persistence on shutdown",
 			zap.String("path", m.PersistPath),
 			zap.Error(err))
-		fmt.Errorf("final persistence on shutdown: %v", err)
 	} else {
 		m.logger.Info("Final persistence on shutdown complete")
 	}
