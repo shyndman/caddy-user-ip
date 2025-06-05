@@ -74,14 +74,14 @@ func TestBasicIPTracking(t *testing.T) {
 		t.Fatalf("Expected user 'test@example.com' in persisted data after polling, but not found")
 	}
 
-	if len(userData.IPs) != 1 || userData.IPs[0] != "1.1.1.1" {
+	if len(userData.IPs) != 1 || userData.IPs[0].IP != "1.1.1.1" {
 		t.Errorf("Expected user 'test@example.com' to have IP ['1.1.1.1'], but got %v", userData.IPs)
 	}
 
-	// Check last_seen is the fake clock's current time
+	// Check last_seen is the fake clock's current time (now stored per-IP)
 	expectedLastSeen := fakeClock.Now().Unix()
-	if userData.LastSeen != expectedLastSeen {
-		t.Errorf("Expected last_seen timestamp to be %d, but got %d", expectedLastSeen, userData.LastSeen)
+	if len(userData.IPs) > 0 && userData.IPs[0].LastSeen != expectedLastSeen {
+		t.Errorf("Expected last_seen timestamp to be %d, but got %d", expectedLastSeen, userData.IPs[0].LastSeen)
 	}
 }
 
@@ -189,13 +189,13 @@ func TestIPExtractionLogic(t *testing.T) {
 	if !existsA {
 		t.Fatalf("Expected user 'user-a@example.com' in persisted data, but not found")
 	}
-	if len(userDataA.IPs) != 1 || userDataA.IPs[0] != "2.2.2.2" {
+	if len(userDataA.IPs) != 1 || userDataA.IPs[0].IP != "2.2.2.2" {
 		t.Errorf("Scenario A: Expected user 'user-a@example.com' to have IP ['2.2.2.2'], but got %v", userDataA.IPs)
 	}
-	// Check last_seen is the fake clock's time after request A
+	// Check last_seen is the fake clock's time after request A (now stored per-IP)
 	expectedLastSeenA := fakeClock.Now().Add(-2 * time.Second).Unix() // Time before advancing for B and C
-	if userDataA.LastSeen != expectedLastSeenA {
-		t.Errorf("Scenario A: Expected last_seen timestamp to be %d, but got %d", expectedLastSeenA, userDataA.LastSeen)
+	if len(userDataA.IPs) > 0 && userDataA.IPs[0].LastSeen != expectedLastSeenA {
+		t.Errorf("Scenario A: Expected last_seen timestamp to be %d, but got %d", expectedLastSeenA, userDataA.IPs[0].LastSeen)
 	}
 
 	// Scenario B
@@ -203,13 +203,13 @@ func TestIPExtractionLogic(t *testing.T) {
 	if !existsB {
 		t.Fatalf("Expected user 'user-b@example.com' in persisted data, but not found")
 	}
-	if len(userDataB.IPs) != 1 || userDataB.IPs[0] != "3.3.3.3" {
+	if len(userDataB.IPs) != 1 || userDataB.IPs[0].IP != "3.3.3.3" {
 		t.Errorf("Scenario B: Expected user 'user-b@example.com' to have IP ['3.3.3.3'], but got %v", userDataB.IPs)
 	}
-	// Check last_seen is the fake clock's time after request B
+	// Check last_seen is the fake clock's time after request B (now stored per-IP)
 	expectedLastSeenB := fakeClock.Now().Add(-1 * time.Second).Unix() // Time before advancing for C
-	if userDataB.LastSeen != expectedLastSeenB {
-		t.Errorf("Scenario B: Expected last_seen timestamp to be %d, but got %d", expectedLastSeenB, userDataB.LastSeen)
+	if len(userDataB.IPs) > 0 && userDataB.IPs[0].LastSeen != expectedLastSeenB {
+		t.Errorf("Scenario B: Expected last_seen timestamp to be %d, but got %d", expectedLastSeenB, userDataB.IPs[0].LastSeen)
 	}
 
 	// Scenario C
@@ -220,10 +220,10 @@ func TestIPExtractionLogic(t *testing.T) {
 	if len(userDataC.IPs) == 0 {
 		t.Errorf("Scenario C: Expected user 'user-c@example.com' to have at least one IP (RemoteAddr), but got none")
 	}
-	// Check last_seen is the fake clock's current time after request C
+	// Check last_seen is the fake clock's current time after request C (now stored per-IP)
 	expectedLastSeenC := fakeClock.Now().Unix()
-	if userDataC.LastSeen != expectedLastSeenC {
-		t.Errorf("Scenario C: Expected last_seen timestamp to be %d, but got %d", expectedLastSeenC, userDataC.LastSeen)
+	if len(userDataC.IPs) > 0 && userDataC.IPs[0].LastSeen != expectedLastSeenC {
+		t.Errorf("Scenario C: Expected last_seen timestamp to be %d, but got %d", expectedLastSeenC, userDataC.IPs[0].LastSeen)
 	}
 	// We can't reliably assert the exact RemoteAddr IP here without more complex test setup,
 	// so we'll just check that an IP was recorded.
@@ -321,22 +321,22 @@ func TestMaxIPsLimit(t *testing.T) {
 	} else {
 		// Check order and content
 		for i := range expectedIPs {
-			if userData.IPs[i] != expectedIPs[i] {
-				t.Errorf("Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPs[i], userData.IPs[i], userData.IPs)
+			if userData.IPs[i].IP != expectedIPs[i] {
+				t.Errorf("Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPs[i], userData.IPs[i].IP, userData.IPs)
 				break
 			}
 		}
 	}
 
-	// Check last_seen is the fake clock's current time after the last request
+	// Check last_seen is the fake clock's current time after the last request (now stored per-IP)
 	expectedLastSeen := fakeClock.Now().Unix()
-	if userData.LastSeen != expectedLastSeen {
-		t.Errorf("Expected last_seen timestamp to be %d, but got %d", expectedLastSeen, userData.LastSeen)
+	if len(userData.IPs) > 0 && userData.IPs[0].LastSeen != expectedLastSeen {
+		t.Errorf("Expected last_seen timestamp to be %d, but got %d", expectedLastSeen, userData.IPs[0].LastSeen)
 	}
 
 	// Optional: Check that 1.1.1.1 is NOT present
-	for _, ip := range userData.IPs {
-		if ip == "1.1.1.1" {
+	for _, ipData := range userData.IPs {
+		if ipData.IP == "1.1.1.1" {
 			t.Errorf("Expected IP '1.1.1.1' to be evicted, but it is still present: %v", userData.IPs)
 			break
 		}
@@ -371,7 +371,10 @@ func TestDuplicateIPHandling(t *testing.T) {
 	if !existsAfterFirst {
 		t.Fatalf("Expected user 'test@example.com' in persisted data after first request, but not found")
 	}
-	initialLastSeen := userDataAfterFirst.LastSeen
+	initialLastSeen := int64(0)
+	if len(userDataAfterFirst.IPs) > 0 {
+		initialLastSeen = userDataAfterFirst.IPs[0].LastSeen
+	}
 
 	fakeClock.Advance(10 * time.Second) // Advance time to ensure distinct timestamps
 
@@ -393,16 +396,16 @@ func TestDuplicateIPHandling(t *testing.T) {
 
 	// Assert that the IP list still contains only 1.1.1.1
 	expectedIPs := []string{"1.1.1.1"}
-	if len(userDataAfterSecond.IPs) != len(expectedIPs) || userDataAfterSecond.IPs[0] != expectedIPs[0] {
+	if len(userDataAfterSecond.IPs) != len(expectedIPs) || userDataAfterSecond.IPs[0].IP != expectedIPs[0] {
 		t.Errorf("Expected user 'test@example.com' to have IP ['1.1.1.1'] after duplicate request, but got %v", userDataAfterSecond.IPs)
 	}
 
-	// Assert that the LastSeen timestamp was updated to the fake clock's current time
-	if userDataAfterSecond.LastSeen != expectedLastSeen {
-		t.Errorf("Expected LastSeen timestamp (%d) to be updated to %d after duplicate request, but it was %d", userDataAfterSecond.LastSeen, expectedLastSeen, userDataAfterSecond.LastSeen)
+	// Assert that the LastSeen timestamp was updated to the fake clock's current time (now stored per-IP)
+	if len(userDataAfterSecond.IPs) > 0 && userDataAfterSecond.IPs[0].LastSeen != expectedLastSeen {
+		t.Errorf("Expected LastSeen timestamp (%d) to be updated to %d after duplicate request, but it was %d", userDataAfterSecond.IPs[0].LastSeen, expectedLastSeen, userDataAfterSecond.IPs[0].LastSeen)
 	}
-	if userDataAfterSecond.LastSeen <= initialLastSeen {
-		t.Errorf("Expected LastSeen timestamp (%d) to be updated after duplicate request, but it was not greater than initial (%d)", userDataAfterSecond.LastSeen, initialLastSeen)
+	if len(userDataAfterSecond.IPs) > 0 && userDataAfterSecond.IPs[0].LastSeen <= initialLastSeen {
+		t.Errorf("Expected LastSeen timestamp (%d) to be updated after duplicate request, but it was not greater than initial (%d)", userDataAfterSecond.IPs[0].LastSeen, initialLastSeen)
 	}
 }
 
@@ -445,13 +448,13 @@ func TestSharedIPAddress(t *testing.T) {
 		t.Fatalf("Expected user 'user1@example.com' in persisted data, but not found")
 	}
 	expectedIPs1 := []string{"5.5.5.5"}
-	if len(userData1.IPs) != len(expectedIPs1) || userData1.IPs[0] != expectedIPs1[0] {
+	if len(userData1.IPs) != len(expectedIPs1) || userData1.IPs[0].IP != expectedIPs1[0] {
 		t.Errorf("Expected user 'user1@example.com' to have IP ['5.5.5.5'], but got %v", userData1.IPs)
 	}
-	// Check last_seen is the fake clock's time after the first request
+	// Check last_seen is the fake clock's time after the first request (now stored per-IP)
 	expectedLastSeen1 := fakeClock.Now().Add(-1 * time.Second).Unix()
-	if userData1.LastSeen != expectedLastSeen1 {
-		t.Errorf("Expected user1 last_seen timestamp to be %d, but got %d", expectedLastSeen1, userData1.LastSeen)
+	if len(userData1.IPs) > 0 && userData1.IPs[0].LastSeen != expectedLastSeen1 {
+		t.Errorf("Expected user1 last_seen timestamp to be %d, but got %d", expectedLastSeen1, userData1.IPs[0].LastSeen)
 	}
 
 	// Check user2@example.com
@@ -460,13 +463,13 @@ func TestSharedIPAddress(t *testing.T) {
 		t.Fatalf("Expected user 'user2@example.com' in persisted data, but not found")
 	}
 	expectedIPs2 := []string{"5.5.5.5"}
-	if len(userData2.IPs) != len(expectedIPs2) || userData2.IPs[0] != expectedIPs2[0] {
+	if len(userData2.IPs) != len(expectedIPs2) || userData2.IPs[0].IP != expectedIPs2[0] {
 		t.Errorf("Expected user 'user2@example.com' to have IP ['5.5.5.5'], but got %v", userData2.IPs)
 	}
-	// Check last_seen is the fake clock's current time after the second request
+	// Check last_seen is the fake clock's current time after the second request (now stored per-IP)
 	expectedLastSeen2 := fakeClock.Now().Unix()
-	if userData2.LastSeen != expectedLastSeen2 {
-		t.Errorf("Expected user2 last_seen timestamp to be %d, but got %d", expectedLastSeen2, userData2.LastSeen)
+	if len(userData2.IPs) > 0 && userData2.IPs[0].LastSeen != expectedLastSeen2 {
+		t.Errorf("Expected user2 last_seen timestamp to be %d, but got %d", expectedLastSeen2, userData2.IPs[0].LastSeen)
 	}
 
 	// Ensure both users exist in the data by reading the file again after both requests
@@ -516,8 +519,8 @@ func TestMultipleIPsPerUser(t *testing.T) {
 	} else {
 		// Check order and content
 		for i := range expectedIPs {
-			if userData.IPs[i] != expectedIPs[i] {
-				t.Errorf("Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPs[i], userData.IPs[i], userData.IPs)
+			if userData.IPs[i].IP != expectedIPs[i] {
+				t.Errorf("Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPs[i], userData.IPs[i].IP, userData.IPs)
 				break
 			}
 		}
@@ -525,13 +528,12 @@ func TestMultipleIPsPerUser(t *testing.T) {
 }
 
 // TestAddUserIPDirtyFlagPersistFalse verifies that adding a new user/IP sets the dirty flag and triggers a non-forced write,
-// and that subsequent identical requests do not trigger a write, but a new IP for the same user does.
+// and that subsequent identical requests also trigger a write (because timestamps are updated), and a new IP for the same user also triggers a write.
 func TestAddUserIPDirtyFlagPersistFalse(t *testing.T) {
 	persistPath := createTempPersistFile(t)
-	// fakeClock is not directly used in this test, but setupFakeClock is called
-	// to inject the fake clock into the Caddy instance for time manipulation
-	// within the middleware's goroutines (periodic persister, etc.).
-	setupFakeClock(t)
+	// fakeClock is used in this test for advancing time between requests
+	// to ensure timestamps are different and trigger persistence.
+	fakeClock := setupFakeClock(t)
 
 	tester := createTester(t, `
     localhost:9080 {
@@ -562,32 +564,39 @@ func TestAddUserIPDirtyFlagPersistFalse(t *testing.T) {
 	if !exists1 {
 		t.Fatalf("State 1: Expected user 'user1@test.com' in persisted data, but not found")
 	}
-	if len(userData1.IPs) != 1 || userData1.IPs[0] != "1.1.1.1" {
+	if len(userData1.IPs) != 1 || userData1.IPs[0].IP != "1.1.1.1" {
 		t.Errorf("State 1: Expected user 'user1@test.com' to have IP ['1.1.1.1'], but got %v", userData1.IPs)
 	}
 
+	// Advance clock to ensure the timestamp will be different
+	fakeClock.Advance(1 * time.Second)
+
 	// Action 2: Send identical HTTP GET request (X-Token-User-Email: user1@test.com, Source IP: 1.1.1.1).
+	// In the new schema, this should update the IP's timestamp and trigger persistence.
 	sendTestRequest(t, tester, "GET", "http://localhost:9080/", "user1@test.com", "1.1.1.1", "")
 
 	// Wait briefly. Record file mod time/content (State 2).
-	// We expect no write, so just wait a bit and check mod time.
-	time.Sleep(100 * time.Millisecond) // Give async goroutine a chance to *not* write
+	// We expect a write because the timestamp was updated.
+	time.Sleep(100 * time.Millisecond) // Give async goroutine a chance to write
 	modTimeState2, err2 := getFileModTime(t, persistPath)
 	if err2 != nil {
 		t.Fatalf("Failed to get file mod time after action 2: %v", err2)
 	}
 	persistedDataState2 := readPersistedData(t, persistPath) // Read content to compare
 
-	// Assertion 2: File mod time and content should be identical to State 1 (no write occurred as dirty was false).
-	if !modTimeState2.Equal(modTimeState1) {
-		t.Errorf("State 2: Expected file modification time to be unchanged (%v), but got %v", modTimeState1, modTimeState2)
+	// Assertion 2: File mod time should be newer because timestamp was updated.
+	if !modTimeState2.After(modTimeState1) {
+		t.Errorf("State 2: Expected file modification time to be newer than State 1 (%v), but got %v", modTimeState1, modTimeState2)
 	}
-	// Compare content by marshalling and comparing JSON strings
+	// Content should be different because the timestamp was updated
 	data1, _ := json.Marshal(persistedDataState1)
 	data2, _ := json.Marshal(persistedDataState2)
-	if string(data1) != string(data2) {
-		t.Errorf("State 2: Expected file content to be unchanged, but it differs.\nState 1: %s\nState 2: %s", string(data1), string(data2))
+	if string(data1) == string(data2) {
+		t.Errorf("State 2: Expected file content to be updated (timestamp changed), but it was unchanged.\nState 1: %s\nState 2: %s", string(data1), string(data2))
 	}
+
+	// Advance clock again for the new IP
+	fakeClock.Advance(1 * time.Second)
 
 	// Action 3: Send HTTP GET request with new IP (X-Token-User-Email: user1@test.com, Source IP: 1.1.1.2).
 	sendTestRequest(t, tester, "GET", "http://localhost:9080/", "user1@test.com", "1.1.1.2", "")
@@ -606,7 +615,7 @@ func TestAddUserIPDirtyFlagPersistFalse(t *testing.T) {
 		t.Fatalf("State 3: Expected user 'user1@test.com' in persisted data, but not found")
 	}
 	expectedIPs3 := []string{"1.1.1.2", "1.1.1.1"}
-	if len(userData3.IPs) != len(expectedIPs3) || userData3.IPs[0] != expectedIPs3[0] || userData3.IPs[1] != expectedIPs3[1] {
+	if len(userData3.IPs) != len(expectedIPs3) || userData3.IPs[0].IP != expectedIPs3[0] || userData3.IPs[1].IP != expectedIPs3[1] {
 		t.Errorf("State 3: Expected user 'user1@test.com' to have IPs %v, but got %v", expectedIPs3, userData3.IPs)
 	}
 	if !modTimeState3.After(modTimeState2) {
@@ -620,11 +629,13 @@ func TestPersistToDiskFalseRespectsDirtyFalse(t *testing.T) {
 	persistPath := createTempPersistFile(t)
 	fakeClock := setupFakeClock(t)
 
-	// Initial State: Create a persistence file manually containing {"user_data": {"user1@test.com": {"ips": ["1.1.1.1"], "last_seen": <timestamp>}}}.
+	// Initial State: Create a persistence file manually containing {"user_data": {"user1@test.com": {"ips": [{"ip": "1.1.1.1", "last_seen": <timestamp>}]}}}.
 	initialUserData := map[string]*UserData{
 		"user1@test.com": {
-			IPs:      []string{"1.1.1.1"},
-			LastSeen: fakeClock.Now().Unix(),
+			IPs: []IPData{{
+				IP:       "1.1.1.1",
+				LastSeen: fakeClock.Now().Unix(),
+			}},
 		},
 	}
 	initialPersistData := persistData{UserData: initialUserData}
@@ -690,8 +701,10 @@ func TestPeriodicPersistToDiskForcesWrite(t *testing.T) {
 	// Initial State: Create a persistence file manually.
 	initialUserData := map[string]*UserData{
 		"user1@test.com": {
-			IPs:      []string{"1.1.1.1"},
-			LastSeen: fakeClock.Now().Unix(),
+			IPs: []IPData{{
+				IP:       "1.1.1.1",
+				LastSeen: fakeClock.Now().Unix(),
+			}},
 		},
 	}
 	initialPersistData := persistData{UserData: initialUserData}
@@ -741,7 +754,7 @@ func TestPeriodicPersistToDiskForcesWrite(t *testing.T) {
 	if !exists1 {
 		t.Fatalf("Expected user 'user1@test.com' in persisted data after periodic persistence, but not found")
 	}
-	if len(userData1.IPs) != 1 || userData1.IPs[0] != "1.1.1.1" {
+	if len(userData1.IPs) != 1 || userData1.IPs[0].IP != "1.1.1.1" {
 		t.Errorf("Expected user 'user1@test.com' to have IP ['1.1.1.1'], but got %v", userData1.IPs)
 	}
 
@@ -750,7 +763,7 @@ func TestPeriodicPersistToDiskForcesWrite(t *testing.T) {
 	if !exists2 {
 		t.Fatalf("Expected user 'user2@test.com' in persisted data after periodic persistence, but not found")
 	}
-	if len(userData2.IPs) != 1 || userData2.IPs[0] != "2.2.2.2" {
+	if len(userData2.IPs) != 1 || userData2.IPs[0].IP != "2.2.2.2" {
 		t.Errorf("Expected user 'user2@test.com' to have IP ['2.2.2.2'], but got %v", userData2.IPs)
 	}
 
@@ -772,12 +785,16 @@ func TestCleanupExpiredUsersSetsDirtyFlag(t *testing.T) {
 	now := fakeClock.Now()
 	initialUserData := map[string]*UserData{
 		"user_old@test.com": {
-			IPs:      []string{"1.1.1.1"},
-			LastSeen: now.Add(-(time.Duration(userDataTTL) + time.Minute)).Unix(), // Older than TTL
+			IPs: []IPData{{
+				IP:       "1.1.1.1",
+				LastSeen: now.Add(-(time.Duration(userDataTTL) + time.Minute)).Unix(), // Older than TTL
+			}},
 		},
 		"user_new@test.com": {
-			IPs:      []string{"2.2.2.2"},
-			LastSeen: now.Add(-time.Minute).Unix(), // Newer than TTL
+			IPs: []IPData{{
+				IP:       "2.2.2.2",
+				LastSeen: now.Add(-time.Minute).Unix(), // Newer than TTL
+			}},
 		},
 	}
 	initialPersistData := persistData{UserData: initialUserData}
@@ -816,7 +833,7 @@ func TestCleanupExpiredUsersSetsDirtyFlag(t *testing.T) {
 	if !existsNew {
 		t.Errorf("State 1: Expected user 'user_new@test.com' in persisted data, but not found")
 	} else {
-		if len(userDataNew.IPs) != 1 || userDataNew.IPs[0] != "2.2.2.2" {
+		if len(userDataNew.IPs) != 1 || userDataNew.IPs[0].IP != "2.2.2.2" {
 			t.Errorf("State 1: Expected user 'user_new@test.com' to have IP ['2.2.2.2'], but got %v", userDataNew.IPs)
 		}
 	}
@@ -825,7 +842,7 @@ func TestCleanupExpiredUsersSetsDirtyFlag(t *testing.T) {
 	if !existsTrigger {
 		t.Errorf("State 1: Expected user 'user_trigger@test.com' in persisted data, but not found")
 	} else {
-		if len(userDataTrigger.IPs) != 1 || userDataTrigger.IPs[0] != "3.3.3.3" {
+		if len(userDataTrigger.IPs) != 1 || userDataTrigger.IPs[0].IP != "3.3.3.3" {
 			t.Errorf("State 1: Expected user 'user_trigger@test.com' to have IP ['3.3.3.3'], but got %v", userDataTrigger.IPs)
 		}
 	}
@@ -883,8 +900,8 @@ func TestUserIPTracking_MRU(t *testing.T) {
 		t.Errorf("Initial state: Expected user '%s' to have %d IPs, but got %d. IPs: %v", testUserEmail, len(expectedIPsInitial), len(userDataInitial.IPs), userDataInitial.IPs)
 	} else {
 		for i := range expectedIPsInitial {
-			if userDataInitial.IPs[i] != expectedIPsInitial[i] {
-				t.Errorf("Initial state: Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPsInitial[i], userDataInitial.IPs[i], userDataInitial.IPs)
+			if userDataInitial.IPs[i].IP != expectedIPsInitial[i] {
+				t.Errorf("Initial state: Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPsInitial[i], userDataInitial.IPs[i].IP, userDataInitial.IPs)
 				break
 			}
 		}
@@ -912,15 +929,102 @@ func TestUserIPTracking_MRU(t *testing.T) {
 		t.Errorf("MRU state: Expected user '%s' to have %d IPs, but got %d. IPs: %v", testUserEmail, len(expectedIPsMRU), len(userDataMRU.IPs), userDataMRU.IPs)
 	} else {
 		for i := range expectedIPsMRU {
-			if userDataMRU.IPs[i] != expectedIPsMRU[i] {
-				t.Errorf("MRU state: Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPsMRU[i], userDataMRU.IPs[i], userDataMRU.IPs)
+			if userDataMRU.IPs[i].IP != expectedIPsMRU[i] {
+				t.Errorf("MRU state: Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPsMRU[i], userDataMRU.IPs[i].IP, userDataMRU.IPs)
 				break
 			}
 		}
 	}
 
-	// Assert that the LastSeen timestamp was updated to the fake clock's current time
-	if userDataMRU.LastSeen != expectedLastSeen {
-		t.Errorf("MRU state: Expected LastSeen timestamp to be %d, but got %d", expectedLastSeen, userDataMRU.LastSeen)
+	// Assert that the LastSeen timestamp was updated to the fake clock's current time (now stored per-IP)
+	if len(userDataMRU.IPs) > 0 && userDataMRU.IPs[0].LastSeen != expectedLastSeen {
+		t.Errorf("MRU state: Expected LastSeen timestamp to be %d, but got %d", expectedLastSeen, userDataMRU.IPs[0].LastSeen)
+	}
+}
+
+// TestUserIPTracking_MRU_MiddleIP verifies that when a middle IP (not first or last) is re-used,
+// it gets moved to the front of the list correctly.
+func TestUserIPTracking_MRU_MiddleIP(t *testing.T) {
+	persistPath := createTempPersistFile(t)
+
+	fakeClock := setupFakeClock(t)
+
+	tester := createTester(t, `
+    localhost:9080 {
+        route {
+            user_ip_tracking {
+                persist_path `+persistPath+`
+                max_ips_per_user 5 # Set limit to 5 for this test
+                user_data_ttl 3600
+            }
+            respond "OK"
+        }
+    }
+  `)
+
+	testUserEmail := "mru-middle-test@example.com"
+
+	// Step 1: Send four sequential requests with distinct IPs
+	sendTestRequest(t, tester, "GET", "http://localhost:9080/", testUserEmail, "10.1.1.1", "") // First IP
+	fakeClock.Advance(1 * time.Second)                                                        // Advance time
+	sendTestRequest(t, tester, "GET", "http://localhost:9080/", testUserEmail, "10.2.2.2", "") // Second IP
+	fakeClock.Advance(1 * time.Second)                                                        // Advance time
+	sendTestRequest(t, tester, "GET", "http://localhost:9080/", testUserEmail, "10.3.3.3", "") // Third IP (this will be our middle IP)
+	fakeClock.Advance(1 * time.Second)                                                        // Advance time
+	sendTestRequest(t, tester, "GET", "http://localhost:9080/", testUserEmail, "10.4.4.4", "") // Fourth IP
+
+	// Poll until data is persisted after the initial four requests
+	persistedUserDataInitial := pollForUserData(t, persistPath, testUserEmail, 2*time.Second, 10*time.Millisecond)
+
+	// Assert initial IP list order (newest first)
+	userDataInitial, existsInitial := persistedUserDataInitial[testUserEmail]
+	if !existsInitial {
+		t.Fatalf("Expected user '%s' in persisted data after initial requests, but not found", testUserEmail)
+	}
+
+	expectedIPsInitial := []string{"10.4.4.4", "10.3.3.3", "10.2.2.2", "10.1.1.1"}
+	if len(userDataInitial.IPs) != len(expectedIPsInitial) {
+		t.Errorf("Initial state: Expected user '%s' to have %d IPs, but got %d. IPs: %v", testUserEmail, len(expectedIPsInitial), len(userDataInitial.IPs), userDataInitial.IPs)
+	} else {
+		for i := range expectedIPsInitial {
+			if userDataInitial.IPs[i].IP != expectedIPsInitial[i] {
+				t.Errorf("Initial state: Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPsInitial[i], userDataInitial.IPs[i].IP, userDataInitial.IPs)
+				break
+			}
+		}
+	}
+
+	// Step 2: Send a fifth request re-using the middle IP (10.2.2.2, originally at index 2)
+	fakeClock.Advance(1 * time.Second) // Advance time
+	expectedLastSeen := fakeClock.Now().Unix() // Record expected LastSeen before sending request
+	sendTestRequest(t, tester, "GET", "http://localhost:9080/", testUserEmail, "10.2.2.2", "") // Re-use middle IP
+
+	// Advance clock by the periodic persistence interval to trigger persistence
+	fakeClock.Advance(5 * time.Minute)
+
+	// Poll until data is persisted after the fifth request
+	persistedUserDataMRU := pollForUserData(t, persistPath, testUserEmail, 2*time.Second, 10*time.Millisecond)
+
+	// Assert MRU IP list order (middle IP moved to front)
+	userDataMRU, existsMRU := persistedUserDataMRU[testUserEmail]
+	if !existsMRU {
+		t.Fatalf("Expected user '%s' in persisted data after MRU request, but not found", testUserEmail)
+	}
+
+	expectedIPsMRU := []string{"10.2.2.2", "10.4.4.4", "10.3.3.3", "10.1.1.1"}
+	if len(userDataMRU.IPs) != len(expectedIPsMRU) {
+		t.Errorf("MRU state: Expected user '%s' to have %d IPs, but got %d. IPs: %v", testUserEmail, len(expectedIPsMRU), len(userDataMRU.IPs), userDataMRU.IPs)
+	} else {
+		for i := range expectedIPsMRU {
+			if userDataMRU.IPs[i].IP != expectedIPsMRU[i] {
+				t.Errorf("MRU state: Expected IP at index %d to be '%s', but got '%s'. Full IPs: %v", i, expectedIPsMRU[i], userDataMRU.IPs[i].IP, userDataMRU.IPs)
+				break
+			}
+		}
+	}
+
+	// Assert that the LastSeen timestamp was updated to the fake clock's current time (now stored per-IP)
+	if len(userDataMRU.IPs) > 0 && userDataMRU.IPs[0].LastSeen != expectedLastSeen {
+		t.Errorf("MRU state: Expected LastSeen timestamp to be %d, but got %d", expectedLastSeen, userDataMRU.IPs[0].LastSeen)
 	}
 }

@@ -5,18 +5,37 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/jonboulle/clockwork"
 	"go.uber.org/zap" // Import the zap logging library
 )
 
+// IPData represents an IP address with its timestamp information
+type IPData struct {
+	// The IP address
+	IP string `json:"ip"`
+
+	// Unix timestamp when this IP was last seen (seconds)
+	LastSeen int64 `json:"last_seen"`
+
+	// ISO8601 datetime string for debug purposes (only set when debug logging enabled)
+	LastSeenISO string `json:"last_seen_iso,omitempty"`
+}
+
 // UserData represents the data stored for each user
 type UserData struct {
-	// List of historical IPs (newest first)
-	IPs []string `json:"ips"`
+	// List of historical IPs with timestamps (newest first)
+	IPs []IPData `json:"ips"`
 
-	// Timestamp of last activity (Unix timestamp in seconds)
-	LastSeen int64 `json:"last_seen"`
+	// Timestamp of last activity (Unix timestamp in seconds) - kept for backward compatibility during migration
+	LastSeen int64 `json:"last_seen,omitempty"`
+}
+
+// legacyUserData represents the old format for migration purposes
+type legacyUserData struct {
+	IPs      []string `json:"ips"`
+	LastSeen int64    `json:"last_seen"`
 }
 
 // UserIPStorage manages the storage of user IP addresses.
@@ -48,6 +67,9 @@ type UserIPStorage struct {
 
 	// Logger for the storage
 	logger *zap.Logger
+
+	// Flag to enable debug logging with ISO8601 timestamps
+	debugLogging bool
 }
 
 // NewUserIPStorage creates a new UserIPStorage with the given configuration.
@@ -62,6 +84,7 @@ func NewUserIPStorage(persistPath string, maxIPsPerUser uint64, userDataTTL uint
 		dirty:         false, // Initialize dirty flag
 		clock:         clock,
 		logger:        logger, // Assign the logger
+		debugLogging:  logger.Level() == zap.DebugLevel, // Enable debug features if debug logging is on
 	}
 	storage.logger.Debug("UserIPStorage initialized with dirty=false") // Debug log
 	return storage
@@ -73,54 +96,85 @@ func (s *UserIPStorage) AddUserIP(email, ip string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := s.clock.Now().Unix()
+	nowISO := ""
+	if s.debugLogging {
+		nowISO = s.clock.Now().Format("2006-01-02T15:04:05-07:00")
+	}
+
 	// Get or create user data
 	userData, exists := s.userData[email]
 	if !exists {
 		// Create new user data
 		userData = &UserData{
-			IPs:      []string{},
-			LastSeen: s.clock.Now().Unix(),
+			IPs: []IPData{},
 		}
 		s.userData[email] = userData
+		s.logger.Info("Created new user entry", zap.String("user", email), zap.String("ip", ip))
 	} else {
-		// Update last seen timestamp
-		userData.LastSeen = s.clock.Now().Unix()
-
 		// Check if this user already has this IP in their list
 		foundIndex := -1
-		for i, existingIP := range userData.IPs {
-			if existingIP == ip {
+		for i, ipData := range userData.IPs {
+			if ipData.IP == ip {
 				foundIndex = i
-				break // Found the IP, no need to continue searching
+				break
 			}
 		}
 
 		if foundIndex != -1 {
-			// IP already exists for this user
+			// IP already exists for this user, update timestamp and move to front if needed
+			ipData := userData.IPs[foundIndex]
+			ipData.LastSeen = now
+			if s.debugLogging {
+				ipData.LastSeenISO = nowISO
+			}
+
 			if foundIndex > 0 {
 				// IP is not the most recent, move it to the front (MRU)
 				// Remove the IP from its current position
 				userData.IPs = append(userData.IPs[:foundIndex], userData.IPs[foundIndex+1:]...)
-
 				// Prepend the IP to the front
-				userData.IPs = append([]string{ip}, userData.IPs...)
+				userData.IPs = append([]IPData{ipData}, userData.IPs...)
 
-				// Mark as dirty since data has changed
+				s.logger.Debug("Moved existing IP to front (MRU)", zap.String("user", email), zap.String("ip", ip))
+				// Mark as dirty and trigger immediate write
 				s.dirty = true
-				s.logger.Debug("Dirty flag set to true in AddUserIP (MRU reorder)", zap.String("user", email), zap.String("ip", ip)) // Debug log
+				go s.writeImmediately()
+			} else {
+				// Update the first entry in place (timestamp changed)
+				userData.IPs[0] = ipData
+				// Mark as dirty and trigger immediate write since timestamp updates are important
+				s.dirty = true
+				go s.writeImmediately()
 			}
-			// IP was already the most recent (foundIndex == 0) or has been moved to the front
-			return false // No *new* IP was added
+			return false // No new IP was added
 		}
 	}
 
-	// Add IP to user's list
-	userData.IPs = append([]string{ip}, userData.IPs...)
+	// Create new IP data entry
+	newIPData := IPData{
+		IP:       ip,
+		LastSeen: now,
+	}
+	if s.debugLogging {
+		newIPData.LastSeenISO = nowISO
+	}
 
-	// Trim list if it exceeds the maximum
+	// Add IP to user's list (prepend to maintain newest-first order)
+	userData.IPs = append([]IPData{newIPData}, userData.IPs...)
+
+	// Trim list if it exceeds the maximum and log evicted IP
 	if uint64(len(userData.IPs)) > s.maxIPsPerUser {
-		// Get the IP that's being removed
-		removedIP := userData.IPs[s.maxIPsPerUser]
+		// Get the IP that's being removed (last in the list)
+		removedIPData := userData.IPs[s.maxIPsPerUser]
+		removedIP := removedIPData.IP
+
+		// Log the eviction
+		s.logger.Info("Evicting oldest IP for user",
+			zap.String("user", email),
+			zap.String("evicted_ip", removedIP),
+			zap.Int64("evicted_ip_last_seen", removedIPData.LastSeen),
+			zap.String("new_ip", ip))
 
 		// Trim the list
 		userData.IPs = userData.IPs[:s.maxIPsPerUser]
@@ -130,6 +184,7 @@ func (s *UserIPStorage) AddUserIP(email, ip string) bool {
 			delete(users, email)
 			if len(users) == 0 {
 				delete(s.ipToUsers, removedIP)
+				s.logger.Debug("Removed IP from global tracking (no remaining users)", zap.String("ip", removedIP))
 			}
 		}
 	}
@@ -140,9 +195,10 @@ func (s *UserIPStorage) AddUserIP(email, ip string) bool {
 	}
 	s.ipToUsers[ip][email] = struct{}{}
 
-	// Mark as dirty since data has changed
+	// Mark as dirty and trigger immediate write
 	s.dirty = true
-	s.logger.Debug("Dirty flag set to true in AddUserIP", zap.String("user", email)) // Debug log
+	s.logger.Info("Added new IP for user", zap.String("user", email), zap.String("ip", ip))
+	go s.writeImmediately()
 
 	// Clean up expired users if TTL is set
 	if s.userDataTTL > 0 {
@@ -181,12 +237,23 @@ func (s *UserIPStorage) GetIPsForUser(email string) []string {
 	defer s.mu.RUnlock()
 
 	if userData, exists := s.userData[email]; exists {
-		// Return a copy to prevent modification of the internal slice
+		// Extract IP strings from IPData structs
 		result := make([]string, len(userData.IPs))
-		copy(result, userData.IPs)
+		for i, ipData := range userData.IPs {
+			result[i] = ipData.IP
+		}
 		return result
 	}
 	return []string{}
+}
+
+// writeImmediately writes data to disk immediately in a goroutine-safe manner
+func (s *UserIPStorage) writeImmediately() {
+	if err := s.PersistToDisk(false); err != nil {
+		s.logger.Error("Failed to write data immediately", zap.Error(err))
+	} else {
+		s.logger.Debug("Successfully wrote data immediately")
+	}
 }
 
 // persistData represents the structure of the data to be persisted.
@@ -221,32 +288,105 @@ func (s *UserIPStorage) LoadFromDisk() error {
 	}
 	s.logger.Debug("Successfully read persistence file", zap.String("path", s.persistPath), zap.Int("bytes_read", len(data)))
 
-	// Parse the JSON
+	// Try to parse the JSON as new format first
 	var pd persistData
 	if err := json.Unmarshal(data, &pd); err != nil {
 		s.logger.Error("Error unmarshalling persistence data", zap.String("path", s.persistPath), zap.Error(err))
 		return err
 	}
-	s.logger.Debug("Successfully unmarshalled persistence data", zap.String("path", s.persistPath), zap.Int("unmarshalled_user_count", len(pd.UserData)))
-	s.logger.Debug("Unmarshalled user data content", zap.Any("user_data", pd.UserData)) // Log the content for inspection
 
-	// Update our data structures
-	s.userData = pd.UserData
-	s.logger.Info("Loaded data from disk", zap.Int("user_count", len(pd.UserData)), zap.String("path", s.persistPath)) // Info log
+	// Check if migration is needed by detecting if this is legacy format
+	// Try to parse a small sample to see if it's old format
+	needsMigration := false
+	if len(pd.UserData) > 0 {
+		// Try parsing as legacy format to detect if migration is needed
+		var testLegacy struct {
+			UserData map[string]*legacyUserData `json:"user_data"`
+		}
+		if err := json.Unmarshal(data, &testLegacy); err == nil {
+			// If legacy parsing succeeds, check if it actually has legacy structure
+			for _, legacyData := range testLegacy.UserData {
+				if len(legacyData.IPs) > 0 {
+					// This is legacy format - IPs are strings not objects
+					needsMigration = true
+					break
+				}
+			}
+		}
+	}
+
+	if needsMigration {
+		s.logger.Info("Detected old data format, performing migration", zap.String("path", s.persistPath))
+		if err := s.migrateFromLegacyFormat(data); err != nil {
+			s.logger.Error("Migration failed", zap.Error(err))
+			return err
+		}
+		s.logger.Info("Migration completed successfully")
+	} else {
+		// Update our data structures with new format
+		s.userData = pd.UserData
+		s.logger.Info("Loaded data from disk (new format)", zap.Int("user_count", len(pd.UserData)), zap.String("path", s.persistPath))
+	}
 
 	// Rebuild the reverse mapping
 	s.ipToUsers = make(map[string]map[string]struct{})
 	for user, userData := range s.userData {
-		for _, ip := range userData.IPs {
-			if _, exists := s.ipToUsers[ip]; !exists {
-				s.ipToUsers[ip] = make(map[string]struct{})
+		for _, ipData := range userData.IPs {
+			if _, exists := s.ipToUsers[ipData.IP]; !exists {
+				s.ipToUsers[ipData.IP] = make(map[string]struct{})
 			}
-			s.ipToUsers[ip][user] = struct{}{}
+			s.ipToUsers[ipData.IP][user] = struct{}{}
 		}
 	}
 
 	s.dirty = false
 	s.logger.Debug("Dirty flag set to false after loading from disk") // Debug log
+	return nil
+}
+
+// migrateFromLegacyFormat converts old format data to new format
+func (s *UserIPStorage) migrateFromLegacyFormat(data []byte) error {
+	// Parse as legacy format
+	var legacyPD struct {
+		UserData map[string]*legacyUserData `json:"user_data"`
+	}
+
+	if err := json.Unmarshal(data, &legacyPD); err != nil {
+		s.logger.Error("Failed to parse legacy format", zap.Error(err))
+		return err
+	}
+
+	// Convert to new format
+	s.userData = make(map[string]*UserData)
+	for user, legacyData := range legacyPD.UserData {
+		// Convert legacy IP strings to IPData structs
+		newIPs := make([]IPData, len(legacyData.IPs))
+		for i, ip := range legacyData.IPs {
+			newIPs[i] = IPData{
+				IP:       ip,
+				LastSeen: legacyData.LastSeen, // Use the user's last seen for all IPs
+			}
+			if s.debugLogging {
+				newIPs[i].LastSeenISO = time.Unix(legacyData.LastSeen, 0).Format("2006-01-02T15:04:05-07:00")
+			}
+		}
+
+		s.userData[user] = &UserData{
+			IPs: newIPs,
+			// Don't set LastSeen in new format as it's per-IP now
+		}
+
+		s.logger.Info("Migrated user data",
+			zap.String("user", user),
+			zap.Int("ip_count", len(newIPs)),
+			zap.Int64("legacy_last_seen", legacyData.LastSeen))
+	}
+
+	// Mark as dirty to ensure the new format gets written
+	s.dirty = true
+	s.logger.Info("Migration complete, will write new format to disk",
+		zap.Int("migrated_users", len(s.userData)))
+
 	return nil
 }
 
@@ -296,41 +436,58 @@ func (s *UserIPStorage) IsDirty() bool {
 
 // cleanupExpiredUsers removes users whose data has expired based on TTL.
 func (s *UserIPStorage) cleanupExpiredUsers() {
-	s.logger.Debug("Starting cleanup of expired users") // Debug log
+	s.logger.Debug("Starting cleanup of expired users")
 
 	// Calculate the expiration timestamp
 	expireTime := s.clock.Now().Unix() - int64(s.userDataTTL)
-	s.logger.Debug("Calculated expiration time", zap.Int64("expire_time", expireTime)) // Debug log
+	s.logger.Debug("Calculated expiration time", zap.Int64("expire_time", expireTime))
 
 	// Check each user
 	for email, userData := range s.userData {
-		s.logger.Debug("Checking user for expiration", zap.String("user", email), zap.Int64("last_seen", userData.LastSeen), zap.Int64("expire_time", expireTime)) // Debug log
-		// If the user's last seen timestamp is older than the expiration time
-		if userData.LastSeen < expireTime {
-			s.logger.Debug("User data expired, removing user", zap.String("user", email)) // Debug log
+		// Find the most recent IP timestamp for this user
+		mostRecentTime := int64(0)
+		for _, ipData := range userData.IPs {
+			if ipData.LastSeen > mostRecentTime {
+				mostRecentTime = ipData.LastSeen
+			}
+		}
+
+		s.logger.Debug("Checking user for expiration",
+			zap.String("user", email),
+			zap.Int64("most_recent_ip_time", mostRecentTime),
+			zap.Int64("expire_time", expireTime))
+
+		// If the user's most recent IP timestamp is older than the expiration time
+		if mostRecentTime < expireTime {
+			s.logger.Info("User data expired, removing user",
+				zap.String("user", email),
+				zap.Int64("most_recent_activity", mostRecentTime),
+				zap.Int("ip_count", len(userData.IPs)))
 
 			// Remove all IPs from the reverse mapping
-			for _, ip := range userData.IPs {
-				s.logger.Debug("Removing IP from reverse mapping for expired user", zap.String("user", email), zap.String("ip", ip)) // Debug log
-				if users, exists := s.ipToUsers[ip]; exists {
+			for _, ipData := range userData.IPs {
+				s.logger.Debug("Removing IP from reverse mapping for expired user",
+					zap.String("user", email),
+					zap.String("ip", ipData.IP))
+				if users, exists := s.ipToUsers[ipData.IP]; exists {
 					delete(users, email)
 					if len(users) == 0 {
-						s.logger.Debug("Removing IP from ipToUsers as no users remain", zap.String("ip", ip)) // Debug log
-						delete(s.ipToUsers, ip)
+						s.logger.Debug("Removing IP from global tracking (no remaining users)",
+							zap.String("ip", ipData.IP))
+						delete(s.ipToUsers, ipData.IP)
 					}
 				}
 			}
 
 			// Remove the user from the userData map
 			delete(s.userData, email)
-			s.logger.Debug("Removed user from userData map", zap.String("user", email)) // Debug log
 
-			// Mark as dirty since data has changed
+			// Mark as dirty and trigger immediate write
 			s.dirty = true
-			s.logger.Debug("Dirty flag set to true in cleanupExpiredUsers", zap.String("user", email)) // Debug log
+			go s.writeImmediately()
 		} else {
-			s.logger.Debug("User data not expired", zap.String("user", email)) // Debug log
+			s.logger.Debug("User data not expired", zap.String("user", email))
 		}
 	}
-	s.logger.Debug("Finished cleanup of expired users") // Debug log
+	s.logger.Debug("Finished cleanup of expired users")
 }
