@@ -70,25 +70,35 @@ type UserIPStorage struct {
 
 	// Flag to enable debug logging with ISO8601 timestamps
 	debugLogging bool
+
+	// Flag to indicate if storage has been configured
+	configured bool
 }
 
-// NewUserIPStorage creates a new UserIPStorage with the given configuration.
-func NewUserIPStorage(persistPath string, maxIPsPerUser uint64, userDataTTL uint64,
-	clock clockwork.Clock, logger *zap.Logger) *UserIPStorage {
-	storage := &UserIPStorage{
-		userData:      make(map[string]*UserData),
-		ipToUsers:     make(map[string]map[string]struct{}),
-		maxIPsPerUser: maxIPsPerUser,
-		userDataTTL:   userDataTTL,
-		persistPath:   persistPath,
-		dirty:         false, // Initialize dirty flag
-		clock:         clock,
-		logger:        logger, // Assign the logger
-		debugLogging:  logger.Level() == zap.DebugLevel, // Enable debug features if debug logging is on
+// Configure sets up the storage instance. It only allows configuration once.
+// Returns true if the configuration was applied, false if it was already configured.
+func (s *UserIPStorage) Configure(persistPath string, maxIPsPerUser uint64, userDataTTL uint64,
+	clock clockwork.Clock, logger *zap.Logger) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.configured {
+		return false
 	}
-	storage.logger.Debug("UserIPStorage initialized with dirty=false") // Debug log
-	return storage
+
+	s.persistPath = persistPath
+	s.maxIPsPerUser = maxIPsPerUser
+	s.userDataTTL = userDataTTL
+	s.clock = clock
+	s.logger = logger
+	s.debugLogging = logger.Level() == zap.DebugLevel
+	s.configured = true
+	s.dirty = false // Initialize dirty flag
+	s.logger.Debug("UserIPStorage configured and initialized with dirty=false")
+
+	return true
 }
+
 
 // AddUserIP adds an IP address for a user, maintaining the FIFO limit.
 // Returns true if the IP was newly added (not already in the user's list).

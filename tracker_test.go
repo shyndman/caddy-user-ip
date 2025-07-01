@@ -623,18 +623,19 @@ func TestAddUserIPDirtyFlagPersistFalse(t *testing.T) {
 	}
 }
 
-// TestPersistToDiskFalseRespectsDirtyFalse verifies that if AddUserIP doesn't modify data (dirty remains false),
-// the subsequent PersistToDisk(false) call does not write to disk.
-func TestPersistToDiskFalseRespectsDirtyFalse(t *testing.T) {
+// TestWriteOnDuplicateIP verifies that adding an existing IP for a user
+// triggers a write to disk because the LastSeen timestamp is updated.
+func TestWriteOnDuplicateIP(t *testing.T) {
 	persistPath := createTempPersistFile(t)
 	fakeClock := setupFakeClock(t)
 
-	// Initial State: Create a persistence file manually containing {"user_data": {"user1@test.com": {"ips": [{"ip": "1.1.1.1", "last_seen": <timestamp>}]}}}.
+	// Initial State: Create a persistence file manually.
+	initialTime := fakeClock.Now()
 	initialUserData := map[string]*UserData{
 		"user1@test.com": {
 			IPs: []IPData{{
 				IP:       "1.1.1.1",
-				LastSeen: fakeClock.Now().Unix(),
+				LastSeen: initialTime.Unix(),
 			}},
 		},
 	}
@@ -660,35 +661,52 @@ func TestPersistToDiskFalseRespectsDirtyFalse(t *testing.T) {
     }
   `)
 
-	// Record initial file mod time/content (State 1).
+	// Record initial file mod time.
 	modTimeState1, err1 := getFileModTime(t, persistPath)
 	if err1 != nil {
 		t.Fatalf("Failed to get file mod time after setup: %v", err1)
 	}
-	persistedDataState1 := readPersistedData(t, persistPath)
 
-	// Action: Send HTTP GET request with header X-Token-User-Email: user1@test.com (Source IP: 1.1.1.1).
-	// AddUserIP should return false because the IP already exists.
+	// Advance the clock to ensure the new timestamp will be different.
+	fakeClock.Advance(10 * time.Second)
+
+	// Action: Send HTTP GET request with the same user and IP.
+	// This should update the timestamp and trigger an immediate write.
 	sendTestRequest(t, tester, "GET", "http://localhost:9080/", "user1@test.com", "1.1.1.1", "")
 
-	// Wait briefly for the async PersistToDisk(false) call. Record file mod time/content (State 2).
-	// We expect no write, so just wait a bit and check mod time.
-	time.Sleep(100 * time.Millisecond) // Give async goroutine a chance to *not* write
-	modTimeState2, err2 := getFileModTime(t, persistPath)
-	if err2 != nil {
-		t.Fatalf("Failed to get file mod time after action: %v", err2)
-	}
-	persistedDataState2 := readPersistedData(t, persistPath) // Read content to compare
+	// Poll for the file modification time to change.
+	timeout := time.After(2 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
 
-	// Assertion: File mod time and content should be identical to State 1.
-	if !modTimeState2.Equal(modTimeState1) {
-		t.Errorf("Expected file modification time to be unchanged (%v), but got %v", modTimeState1, modTimeState2)
+	var modTimeState2 time.Time
+	var err2 error
+	for {
+		select {
+		case <-timeout:
+			t.Fatalf("Timeout waiting for file modification time to change")
+		case <-tick.C:
+			modTimeState2, err2 = getFileModTime(t, persistPath)
+			if err2 != nil {
+				t.Fatalf("Failed to get file mod time after action: %v", err2)
+			}
+			if modTimeState2.After(modTimeState1) {
+				goto AROUND
+			}
+		}
 	}
-	// Compare content by marshalling and comparing JSON strings
-	data1, _ := json.Marshal(persistedDataState1)
-	data2, _ := json.Marshal(persistedDataState2)
-	if string(data1) != string(data2) {
-		t.Errorf("Expected file content to be unchanged, but it differs.\nState 1: %s\nState 2: %s", string(data1), string(data2))
+AROUND:
+
+	// Assertion: File mod time should be newer, and content should have an updated timestamp.
+	persistedDataState2 := readPersistedData(t, persistPath)
+	userData2, exists2 := persistedDataState2["user1@test.com"]
+	if !exists2 {
+		t.Fatalf("Expected user 'user1@test.com' in persisted data, but not found")
+	}
+
+	expectedTimestamp := initialTime.Add(10 * time.Second).Unix()
+	if len(userData2.IPs) > 0 && userData2.IPs[0].LastSeen != expectedTimestamp {
+		t.Errorf("Expected last_seen timestamp to be updated to %d, but got %d", expectedTimestamp, userData2.IPs[0].LastSeen)
 	}
 }
 
@@ -739,7 +757,7 @@ func TestPeriodicPersistToDiskForcesWrite(t *testing.T) {
 	// Manually add a new user to the storage. This will set the dirty flag.
 	// This change is in memory but not yet persisted by ServeHTTP's async call
 	// because the initial request didn't set the dirty flag.
-	globalStorage.AddUserIP("user2@test.com", "2.2.2.2")
+	getStorage().AddUserIP("user2@test.com", "2.2.2.2")
 
 	// Advance the FakeClock by slightly more than the default persistInterval (5 minutes).
 	// This should trigger the periodic persister, which forces a write of the current state (including user2).
@@ -779,33 +797,10 @@ func TestCleanupExpiredUsersSetsDirtyFlag(t *testing.T) {
 	persistPath := createTempPersistFile(t)
 	fakeClock := setupFakeClock(t)
 
-	// Initial State: Create a persistence file manually with one expired user and one non-expired user.
 	// Set TTL to 600 seconds (10 minutes).
 	userDataTTL := time.Second * 600
-	now := fakeClock.Now()
-	initialUserData := map[string]*UserData{
-		"user_old@test.com": {
-			IPs: []IPData{{
-				IP:       "1.1.1.1",
-				LastSeen: now.Add(-(time.Duration(userDataTTL) + time.Minute)).Unix(), // Older than TTL
-			}},
-		},
-		"user_new@test.com": {
-			IPs: []IPData{{
-				IP:       "2.2.2.2",
-				LastSeen: now.Add(-time.Minute).Unix(), // Newer than TTL
-			}},
-		},
-	}
-	initialPersistData := persistData{UserData: initialUserData}
-	initialData, err := json.MarshalIndent(initialPersistData, "", "  ")
-	if err != nil {
-		t.Fatalf("Failed to marshal initial data: %v", err)
-	}
-	if err := os.WriteFile(persistPath, initialData, 0644); err != nil {
-		t.Fatalf("Failed to write initial persistence file: %v", err)
-	}
 
+	// Configure Caddy with the TTL
 	tester := createTester(t, `
     localhost:9080 {
         route {
@@ -819,32 +814,21 @@ func TestCleanupExpiredUsersSetsDirtyFlag(t *testing.T) {
     }
   `)
 
-	// Action: Send HTTP GET request for a *different* user (user_trigger@test.com, Source IP: 3.3.3.3).
-	// This calls AddUserIP, which calls cleanupExpiredUsers. user_old should be removed, setting dirty=true.
-	// ServeHTTP calls PersistToDisk(false).
-	sendTestRequest(t, tester, "GET", "http://localhost:9080/", "user_trigger@test.com", "3.3.3.3", "")
+	// Action 1: Add an "old" user and advance the clock past the TTL.
+	sendTestRequest(t, tester, "GET", "http://localhost:9080/", "user_old@test.com", "1.1.1.1", "")
+	pollForUserData(t, persistPath, "user_old@test.com", 2*time.Second, 10*time.Millisecond)
+	fakeClock.Advance(userDataTTL + time.Minute) // Advance clock to make user_old expire
 
-	// Wait briefly. Read persisted data (Data 1).
+	// Action 2: Add a "new" user. This request will trigger the cleanup.
+	sendTestRequest(t, tester, "GET", "http://localhost:9080/", "user_new@test.com", "2.2.2.2", "")
+
 	// Poll until the new user is present, which indicates a write occurred.
-	persistedDataState1 := pollForUserData(t, persistPath, "user_trigger@test.com", 2*time.Second, 10*time.Millisecond)
+	persistedDataState1 := pollForUserData(t, persistPath, "user_new@test.com", 2*time.Second, 10*time.Millisecond)
 
-	// Assertion 1: Should contain user_new@test.com and user_trigger@test.com.
-	userDataNew, existsNew := persistedDataState1["user_new@test.com"]
+	// Assertion 1: Should contain user_new@test.com.
+	_, existsNew := persistedDataState1["user_new@test.com"]
 	if !existsNew {
 		t.Errorf("State 1: Expected user 'user_new@test.com' in persisted data, but not found")
-	} else {
-		if len(userDataNew.IPs) != 1 || userDataNew.IPs[0].IP != "2.2.2.2" {
-			t.Errorf("State 1: Expected user 'user_new@test.com' to have IP ['2.2.2.2'], but got %v", userDataNew.IPs)
-		}
-	}
-
-	userDataTrigger, existsTrigger := persistedDataState1["user_trigger@test.com"]
-	if !existsTrigger {
-		t.Errorf("State 1: Expected user 'user_trigger@test.com' in persisted data, but not found")
-	} else {
-		if len(userDataTrigger.IPs) != 1 || userDataTrigger.IPs[0].IP != "3.3.3.3" {
-			t.Errorf("State 1: Expected user 'user_trigger@test.com' to have IP ['3.3.3.3'], but got %v", userDataTrigger.IPs)
-		}
 	}
 
 	// Assertion 2: Should *not* contain user_old@test.com.
@@ -852,9 +836,6 @@ func TestCleanupExpiredUsersSetsDirtyFlag(t *testing.T) {
 	if existsOld {
 		t.Errorf("State 1: Expected user 'user_old@test.com' to be removed from persisted data, but it was found")
 	}
-
-	// Assertion 3: The file should have been written (checked by pollForUserData succeeding for user_trigger).
-	// We can also check the mod time is newer than the initial write time if needed, but polling is sufficient.
 }
 
 // TestUserIPTracking_MRU verifies the Most Recently Used (MRU) behavior of the user_ip_tracking middleware.

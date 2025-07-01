@@ -79,6 +79,9 @@ func pollForUserData(t *testing.T, path, email string, timeout, interval time.Du
 // createTester initializes a new caddytest.Tester with a standard header
 // and the provided caddyfileFragment.
 func createTester(t *testing.T, caddyfileFragment string) *caddytest.Tester {
+	// Reset the singleton storage instance before each test to ensure test isolation.
+	resetStorage()
+
 	tester := caddytest.NewTester(t)
 	fullCaddyfile := `
   {

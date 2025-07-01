@@ -28,9 +28,6 @@ type UserIpTracking struct {
 
 	// Storage for user IPs
 	storage *UserIPStorage
-
-	// clock provides access to time functions via the clockwork interface
-	clock clockwork.Clock
 }
 
 // CaddyModule returns the Caddy module information.
@@ -44,14 +41,28 @@ func (*UserIpTracking) CaddyModule() caddy.ModuleInfo {
 // Provision sets up the middleware.
 func (m *UserIpTracking) Provision(ctx caddy.Context) error {
 	m.logger = ctx.Logger(m)
+	var clock clockwork.Clock
 	if testClockInject != nil {
-		m.clock = testClockInject
+		clock = testClockInject
 	} else {
-		m.clock = clockwork.NewRealClock() // Instantiate the real clock from the library
+		clock = clockwork.NewRealClock()
 	}
 
-	// Log the configuration values to verify they were parsed correctly
-	m.logger.Info("UserIpTracking middleware provisioned",
+	// Get the singleton storage instance
+	m.storage = getStorage()
+
+	// Attempt to configure the singleton storage
+	wasConfigured := m.storage.Configure(m.PersistPath, m.MaxIpsPerUser, m.UserDataTTL, clock, m.logger)
+
+	if !wasConfigured {
+		m.logger.Warn("user_ip_tracking storage is already configured; ignoring subsequent configuration",
+			zap.String("persist_path", m.PersistPath),
+			zap.Uint64("max_ips_per_user", m.MaxIpsPerUser),
+			zap.Uint64("user_data_ttl", m.UserDataTTL))
+		return nil
+	}
+
+	m.logger.Info("UserIpTracking middleware configured",
 		zap.String("persist_path", m.PersistPath),
 		zap.Uint64("max_ips_per_user", m.MaxIpsPerUser),
 		zap.Uint64("user_data_ttl", m.UserDataTTL))
@@ -60,18 +71,11 @@ func (m *UserIpTracking) Provision(ctx caddy.Context) error {
 	if m.PersistPath == "" {
 		return fmt.Errorf("persist_path is required")
 	}
-
 	if m.MaxIpsPerUser <= 0 {
 		return fmt.Errorf("max_ips_per_user must be greater than 0")
 	}
 
-	// Initialize the storage
-	m.storage = NewUserIPStorage(m.PersistPath, m.MaxIpsPerUser, m.UserDataTTL, m.clock, m.logger) // Pass the logger
-
-	// Set the global storage reference for the matcher to use
-	globalStorage = m.storage
-
-	// Load existing data from disk
+	// Load existing data from disk since we are the first to configure
 	if err := m.storage.LoadFromDisk(); err != nil {
 		m.logger.Error("Failed to load user IP data from disk",
 			zap.String("path", m.PersistPath),
@@ -165,7 +169,7 @@ func (m *UserIpTracking) Cleanup() error {
 	m.logger.Info("Performing final persistence on shutdown")
 	if err := m.storage.PersistToDisk(true); err != nil {
 		m.logger.Error("Failed to perform final persistence on shutdown",
-			zap.String("path", m.PersistPath),
+			zap.String("path", m.storage.persistPath),
 			zap.Error(err))
 	} else {
 		m.logger.Info("Final persistence on shutdown complete")

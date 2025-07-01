@@ -66,26 +66,23 @@ func (m UserIPMatcher) MatchWithError(r *http.Request) (bool, error) {
 	// Extract the client IP address
 	clientIP := getClientIP(r)
 
-	// Check if we have a global storage reference
-	if globalStorage == nil {
-		m.logger.Debug("No global storage available for matching")
-		return false, nil
-	}
+	// Get the singleton storage instance
+	storage := getStorage()
 
 	// Check if the IP is in the storage
-	hasIP := globalStorage.HasIP(clientIP)
+	hasIP := storage.HasIP(clientIP)
 
 	// Dump the contents of the storage for debugging
-	globalStorage.mu.RLock()
+	storage.mu.RLock()
 	var users []string
-	for user := range globalStorage.userData {
+	for user := range storage.userData {
 		users = append(users, user)
 	}
 	var ips []string
-	for ip := range globalStorage.ipToUsers {
+	for ip := range storage.ipToUsers {
 		ips = append(ips, ip)
 	}
-	globalStorage.mu.RUnlock()
+	storage.mu.RUnlock()
 
 	m.logger.Debug("Matching client IP against known user IPs",
 		zap.String("ip", clientIP),
